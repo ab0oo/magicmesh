@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mesh Flood Routing Simulator</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="app__header">
+        <div>
+          <h1>Mesh Flood Routing Simulator</h1>
+          <p>Canvas-based mesh network visualization with flood routing.</p>
+        </div>
+        <div class="controls">
+          <button id="reset">Reset</button>
+          <button id="pause">Pause</button>
+          <label>
+            Node Count
+            <input id="nodeCount" type="range" min="20" max="200" value="80" />
+          </label>
+          <label>
+            Range
+            <input id="range" type="range" min="40" max="200" value="110" />
+          </label>
+          <label>
+            Time Scale
+            <input id="timeScale" type="range" min="0.1" max="1" step="0.05" value="1" />
+          </label>
+          <label>
+            Max Hops
+            <input id="ttl" type="number" min="1" max="12" value="6" />
+          </label>
+        </div>
+      </header>
+      <section class="app__canvas">
+        <canvas id="sim" width="1200" height="720"></canvas>
+      </section>
+      <footer class="app__footer">
+        Click a node to inject a flood message. Shift-click to pin/unpin a node.
+      </footer>
+    </main>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
