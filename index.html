@@ -5,42 +5,104 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Mesh Flood Routing Simulator</title>
     <link rel="stylesheet" href="style.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
   </head>
   <body>
     <main class="app">
-      <header class="app__header">
-        <div>
+      <aside class="app__sidebar">
+        <header class="app__header">
           <h1>Mesh Flood Routing Simulator</h1>
           <p>Canvas-based mesh network visualization with flood routing.</p>
-        </div>
+        </header>
         <div class="controls">
-          <button id="reset">Reset</button>
-          <button id="pause">Pause</button>
+          <button id="resetColors">Reset Node Colors</button>
+          <button id="download">Download</button>
+          <button id="load">Load</button>
+          <button id="saveState">Save</button>
+          <input id="loadFile" type="file" accept="application/json" />
           <label>
             Node Count
-            <input id="nodeCount" type="range" min="20" max="200" value="80" />
+            <input id="nodeCount" type="range" min="10" max="200" value="80" />
           </label>
           <label>
             Range
             <input id="range" type="range" min="40" max="200" value="110" />
           </label>
           <label>
+            Modulation Preset
+            <select id="modPreset">
+              <option value="manual">Manual Range</option>
+              <option value="short_turbo">Short Turbo (SF7/BW500)</option>
+              <option value="short_fast">Short Fast (SF7/BW250)</option>
+              <option value="short_slow">Short Slow (SF8/BW250)</option>
+              <option value="medium_fast">Medium Fast (SF9/BW250)</option>
+              <option value="medium_slow">Medium Slow (SF10/BW250)</option>
+              <option value="long_turbo">Long Turbo (SF11/BW500)</option>
+              <option value="long_fast">Long Fast (SF11/BW250)</option>
+              <option value="long_moderate">Long Moderate (SF11/BW125)</option>
+              <option value="long_slow">Long Slow (SF12/BW125)</option>
+            </select>
+          </label>
+          <label>
+            Packet Size (bytes)
+            <input id="packetSize" type="number" min="20" max="250" step="1" value="20" />
+          </label>
+          <div class="controls__fixed" aria-label="Fixed RF characteristics">
+            <div class="controls__fixedTitle">RF (fixed)</div>
+            <div class="controls__fixedGrid">
+              <div class="controls__kv"><span class="controls__k">Radio</span><span class="controls__v">SX1262</span></div>
+              <div class="controls__kv"><span class="controls__k">Freq</span><span class="controls__v">915 MHz</span></div>
+              <div class="controls__kv"><span class="controls__k">TX</span><span class="controls__v">24 dBm</span></div>
+              <div class="controls__kv"><span class="controls__k">TX gain</span><span class="controls__v">3 dBi</span></div>
+              <div class="controls__kv"><span class="controls__k">RX gain</span><span class="controls__v">3 dBi</span></div>
+              <div class="controls__kv"><span class="controls__k">Noise floor</span><span class="controls__v">-120 dBm</span></div>
+              <div class="controls__kv"><span class="controls__k">Path loss</span><span class="controls__v">n = 2.0</span></div>
+              <div class="controls__kv"><span class="controls__k">On-air</span><span class="controls__v" id="toaValue">—</span></div>
+            </div>
+          </div>
+          <label>
             Time Scale
             <input id="timeScale" type="range" min="0.1" max="1" step="0.05" value="1" />
           </label>
           <label>
             Max Hops
-            <input id="ttl" type="number" min="1" max="12" value="6" />
+            <input id="ttl" type="number" min="1" max="12" value="4" />
           </label>
         </div>
-      </header>
+      </aside>
       <section class="app__canvas">
-        <canvas id="sim" width="1200" height="720"></canvas>
+        <div class="app__stage">
+          <div id="map" class="map"></div>
+          <canvas id="sim" width="1200" height="720"></canvas>
+        </div>
+        <div class="app__canvasControls">
+          <button id="mapToggle" hidden>Map Pan/Zoom</button>
+        </div>
       </section>
       <footer class="app__footer">
         Click a node to inject a flood message. Shift-click to pin/unpin a node.
       </footer>
     </main>
-    <script type="module" src="main.js"></script>
+    <div class="app__version" aria-hidden="true" id="appVersion"></div>
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script>
+      window.APP_VERSION = "0.1.5";
+      const versionEl = document.getElementById("appVersion");
+      if (versionEl) {
+        versionEl.textContent = `v${window.APP_VERSION}`;
+      }
+    </script>
+    <script type="module">
+      import(`./main.js?v=${encodeURIComponent(window.APP_VERSION)}`);
+    </script>
   </body>
 </html>

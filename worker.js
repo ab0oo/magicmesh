@@ -1,481 +1,637 @@
 let canvas;
 let ctx;
+
 const scheduleFrame = self.requestAnimationFrame
   ? (cb) => self.requestAnimationFrame(cb)
   : (cb) => setTimeout(() => cb(performance.now()), 16);
+
 let useExternalClock = false;
 
-class Quadtree {
-  constructor(bounds, capacity = 6) {
-    this.bounds = bounds;
-    this.capacity = capacity;
-    this.points = [];
-    this.divided = false;
+const version = new URL(import.meta.url).searchParams.get("v") || "";
+const withVersion = (relativePath) => {
+  const url = new URL(relativePath, import.meta.url);
+  if (version) {
+    url.searchParams.set("v", version);
   }
-
-  contains(point) {
-    const { x, y, w, h } = this.bounds;
-    return (
-      point.x >= x &&
-      point.x <= x + w &&
-      point.y >= y &&
-      point.y <= y + h
-    );
-  }
-
-  intersects(range) {
-    const { x, y, w, h } = this.bounds;
-    return !(
-      range.x > x + w ||
-      range.x + range.w < x ||
-      range.y > y + h ||
-      range.y + range.h < y
-    );
-  }
-
-  subdivide() {
-    const { x, y, w, h } = this.bounds;
-    const hw = w / 2;
-    const hh = h / 2;
-    this.northwest = new Quadtree({ x, y, w: hw, h: hh }, this.capacity);
-    this.northeast = new Quadtree({ x: x + hw, y, w: hw, h: hh }, this.capacity);
-    this.southwest = new Quadtree({ x, y: y + hh, w: hw, h: hh }, this.capacity);
-    this.southeast = new Quadtree(
-      { x: x + hw, y: y + hh, w: hw, h: hh },
-      this.capacity
-    );
-    this.divided = true;
-  }
-
-  insert(point) {
-    if (!this.contains(point)) {
-      return false;
-    }
-    if (this.points.length < this.capacity) {
-      this.points.push(point);
-      return true;
-    }
-    if (!this.divided) {
-      this.subdivide();
-    }
-    return (
-      this.northwest.insert(point) ||
-      this.northeast.insert(point) ||
-      this.southwest.insert(point) ||
-      this.southeast.insert(point)
-    );
-  }
-
-  query(range, found = []) {
-    if (!this.intersects(range)) {
-      return found;
-    }
-    for (const point of this.points) {
-      if (
-        point.x >= range.x &&
-        point.x <= range.x + range.w &&
-        point.y >= range.y &&
-        point.y <= range.y + range.h
-      ) {
-        found.push(point);
-      }
-    }
-    if (this.divided) {
-      this.northwest.query(range, found);
-      this.northeast.query(range, found);
-      this.southwest.query(range, found);
-      this.southeast.query(range, found);
-    }
-    return found;
-  }
-}
-
-const state = {
-  nodes: [],
-  messages: [],
-  paused: false,
-  dynamic: false,
-  nextMessageId: 1,
-  lastTime: 0,
-  simTime: 0,
-  timeScale: 1,
-  ttl: 6,
-  range: 110,
-  nodeCount: 80,
-  width: 1200,
-  height: 720,
-  dragNodeId: null,
-  lastTransmissionCount: 0,
-  lastMessageId: 0,
-  onAirTime: 350,
-  maxRelayWait: 500,
+  return url.href;
 };
 
-const palette = ["#f4c95d", "#5ce1e6", "#ff8a5c", "#f57ad2", "#9bff8f"];
-
-function randomRange(min, max) {
-  return min + Math.random() * (max - min);
-}
-
-function resizeCanvas(width, height, dpr) {
-  state.width = width;
-  state.height = height;
-  canvas.width = Math.floor(width * dpr);
-  canvas.height = Math.floor(height * dpr);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-}
-
-function createNodes() {
-  const padding = 40;
-  state.nodes = Array.from({ length: state.nodeCount }, (_, id) => ({
-    id,
-    x: randomRange(padding, state.width - padding),
-    y: randomRange(padding, state.height - padding),
-    vx: randomRange(-0.4, 0.4),
-    vy: randomRange(-0.4, 0.4),
-    pinned: false,
-    received: new Set(),
-    pulses: [],
-  }));
-}
-
-function resetSimulation() {
-  state.messages = [];
-  state.nextMessageId = 1;
-  createNodes();
-}
-
-function computeNeighbors() {
-  const tree = new Quadtree({ x: 0, y: 0, w: state.width, h: state.height });
-  for (const node of state.nodes) {
-    tree.insert({ x: node.x, y: node.y, id: node.id });
-  }
-
-  const neighbors = Array.from({ length: state.nodes.length }, () => []);
-  for (const node of state.nodes) {
-    const range = {
-      x: node.x - state.range,
-      y: node.y - state.range,
-      w: state.range * 2,
-      h: state.range * 2,
-    };
-    const candidates = tree.query(range);
-    const nearby = [];
-    for (const candidate of candidates) {
-      if (candidate.id === node.id) {
-        continue;
-      }
-      const dx = node.x - candidate.x;
-      const dy = node.y - candidate.y;
-      if (dx * dx + dy * dy <= state.range * state.range) {
-        nearby.push(candidate.id);
-      }
-    }
-    neighbors[node.id] = nearby;
-  }
-  return neighbors;
-}
-
-function injectMessage(originNode) {
-  const id = state.nextMessageId++;
-  const color = palette[(id - 1) % palette.length];
-  const now = state.simTime;
-  const message = {
-    id,
-    color,
-    transmitQueue: [{ nodeId: originNode.id, readyAt: now, hop: 0 }],
-    pendingReceives: [],
-    seen: new Set([originNode.id]),
-    transmissions: 0,
-  };
-  state.messages.push(message);
-  receiveMessage(originNode, message);
-}
-
-function receiveMessage(node, message) {
-  node.received.add(message.id);
-}
-
-function emitPulse(node, message) {
-  node.pulses.push({ color: message.color, age: 0, duration: state.onAirTime });
-}
-
-function updateMessages(neighbors, now) {
-  for (const message of state.messages) {
-    if (message.pendingReceives.length > 0) {
-      const remainingReceives = [];
-      for (const receiveEvent of message.pendingReceives) {
-        if (receiveEvent.time > now) {
-          remainingReceives.push(receiveEvent);
-          continue;
-        }
-        const receiver = state.nodes[receiveEvent.nodeId];
-        const sender = state.nodes[receiveEvent.fromId];
-        if (!receiver || !sender) {
-          continue;
-        }
-        receiveMessage(receiver, message);
-        const dx = receiver.x - sender.x;
-        const dy = receiver.y - sender.y;
-        const ratio = Math.min(1, Math.hypot(dx, dy) / state.range);
-        const relayDelay = state.maxRelayWait * (1 - ratio);
-        message.transmitQueue.push({
-          nodeId: receiver.id,
-          readyAt: now + relayDelay,
-          hop: receiveEvent.hop,
-        });
-      }
-      message.pendingReceives = remainingReceives;
-    }
-
-    if (message.transmitQueue.length > 0) {
-      const remainingTransmits = [];
-      for (const transmitEvent of message.transmitQueue) {
-        if (transmitEvent.readyAt > now) {
-          remainingTransmits.push(transmitEvent);
-          continue;
-        }
-        if (transmitEvent.hop >= state.ttl) {
-          continue;
-        }
-        const sender = state.nodes[transmitEvent.nodeId];
-        if (!sender) {
-          continue;
-        }
-        emitPulse(sender, message);
-        for (const neighborId of neighbors[transmitEvent.nodeId]) {
-          if (message.seen.has(neighborId)) {
-            continue;
-          }
-          message.seen.add(neighborId);
-          message.pendingReceives.push({
-            nodeId: neighborId,
-            fromId: transmitEvent.nodeId,
-            time: now + state.onAirTime,
-            hop: transmitEvent.hop + 1,
-          });
-          message.transmissions += 1;
-        }
-      }
-      message.transmitQueue = remainingTransmits;
-    }
-  }
-  state.messages = state.messages.filter((message) => {
-    if (message.transmitQueue.length > 0 || message.pendingReceives.length > 0) {
-      return true;
-    }
-    state.lastTransmissionCount = message.transmissions;
-    state.lastMessageId = message.id;
-    return false;
-  });
-}
-
-function updateNodes() {
-  const padding = 30;
-  for (const node of state.nodes) {
-    if (node.pinned) {
-      continue;
-    }
-    node.x += node.vx;
-    node.y += node.vy;
-    if (node.x < padding || node.x > state.width - padding) {
-      node.vx *= -1;
-    }
-    if (node.y < padding || node.y > state.height - padding) {
-      node.vy *= -1;
-    }
-  }
-}
-
-function updatePulses(delta) {
-  for (const node of state.nodes) {
-    node.pulses = node.pulses
-      .map((pulse) => ({
-        ...pulse,
-        age: pulse.age + delta,
-      }))
-      .filter((pulse) => pulse.age < pulse.duration);
-  }
-}
-
-function draw(neighbors) {
-  ctx.clearRect(0, 0, state.width, state.height);
-
-  ctx.lineWidth = 1;
-  ctx.globalAlpha = 0.15;
-  ctx.strokeStyle = "#6c7b91";
-  for (let i = 0; i < neighbors.length; i += 1) {
-    for (const j of neighbors[i]) {
-      if (j > i) {
-        ctx.beginPath();
-        ctx.moveTo(state.nodes[i].x, state.nodes[i].y);
-        ctx.lineTo(state.nodes[j].x, state.nodes[j].y);
-        ctx.stroke();
-      }
-    }
-  }
-  ctx.globalAlpha = 1;
-
-  for (const node of state.nodes) {
-    for (const pulse of node.pulses) {
-      const progress = pulse.duration > 0 ? pulse.age / pulse.duration : 1;
-      const radius = Math.min(state.range, progress * state.range);
-      ctx.beginPath();
-      ctx.strokeStyle = pulse.color;
-      ctx.globalAlpha = Math.max(0, 1 - progress);
-      ctx.lineWidth = 2;
-      ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-  }
-  ctx.globalAlpha = 1;
-
-  for (const node of state.nodes) {
-    ctx.beginPath();
-    ctx.fillStyle = node.pinned ? "#f4c95d" : "#e6edf6";
-    ctx.arc(node.x, node.y, 5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  ctx.fillStyle = "#9fb0c5";
-  ctx.font = "12px 'Space Grotesk', sans-serif";
-  ctx.fillText(
-    `Nodes: ${state.nodeCount} | Active floods: ${state.messages.length} | Last flood (#${state.lastMessageId}) transmissions: ${state.lastTransmissionCount}`,
-    16,
-    state.height - 16
-  );
-}
-
-function findNodeAt(x, y) {
-  let closest = null;
-  let closestDist = Infinity;
-  for (const node of state.nodes) {
-    const dist = Math.hypot(node.x - x, node.y - y);
-    if (dist < 12 && dist < closestDist) {
-      closest = node;
-      closestDist = dist;
-    }
-  }
-  return closest;
-}
-
-function tick(now) {
-  const deltaReal = now - state.lastTime;
-  state.lastTime = now;
-  const delta = state.paused ? 0 : deltaReal * state.timeScale;
-  if (!state.paused) {
-    state.simTime += delta;
-  }
-  const simNow = state.simTime;
-
-  if (!state.paused) {
-    if (state.dynamic) {
-      updateNodes();
-    }
-  }
-
-  const neighbors = computeNeighbors();
-
-  if (!state.paused) {
-    updateMessages(neighbors, simNow);
-    updatePulses(delta);
-  }
-
-  draw(neighbors);
-  if (!useExternalClock) {
-    scheduleFrame(tick);
-  }
-}
+let handleMessageData = null;
+const pendingMessages = [];
 
 self.onmessage = (event) => {
-  const { type, payload } = event.data;
-  if (type === "init") {
-    canvas = payload.canvas;
-    ctx = canvas.getContext("2d");
-    useExternalClock = Boolean(payload.externalClock);
-    state.nodeCount = payload.nodeCount;
-    state.range = payload.range;
-    state.ttl = payload.ttl;
-    state.timeScale = payload.timeScale ?? state.timeScale;
-    resizeCanvas(payload.width, payload.height, payload.dpr);
-    resetSimulation();
-    state.lastTime = performance.now();
-    state.simTime = 0;
-    if (!useExternalClock) {
-      scheduleFrame(tick);
-    }
+  const data = event.data;
+  if (typeof handleMessageData !== "function") {
+    pendingMessages.push(data);
     return;
   }
-  if (type === "tick") {
-    if (useExternalClock) {
-      tick(payload.now);
-    }
-    return;
-  }
-  if (type === "resize") {
-    resizeCanvas(payload.width, payload.height, payload.dpr);
-    resetSimulation();
-    return;
-  }
-  if (type === "pause") {
-    state.paused = payload.paused;
-    return;
-  }
-  if (type === "reset") {
-    resetSimulation();
-    return;
-  }
-  if (type === "setParams") {
-    if (payload.nodeCount !== undefined) {
-      state.nodeCount = payload.nodeCount;
-    }
-    if (payload.range !== undefined) {
-      state.range = payload.range;
-    }
-    if (payload.ttl !== undefined) {
-      state.ttl = payload.ttl;
-    }
-    if (payload.timeScale !== undefined) {
-      state.timeScale = payload.timeScale;
-    }
-    return;
-  }
-  if (type === "click") {
-    const node = findNodeAt(payload.x, payload.y);
-    if (!node) {
-      return;
-    }
-    if (payload.shiftKey) {
-      node.pinned = !node.pinned;
-      node.vx = randomRange(-0.4, 0.4);
-      node.vy = randomRange(-0.4, 0.4);
-      return;
-    }
-    injectMessage(node);
-    return;
-  }
-  if (type === "dragStart") {
-    const node = findNodeAt(payload.x, payload.y);
-    if (!node) {
-      state.dragNodeId = null;
-      return;
-    }
-    state.dragNodeId = node.id;
-    return;
-  }
-  if (type === "dragMove") {
-    if (state.dragNodeId === null) {
-      return;
-    }
-    const node = state.nodes[state.dragNodeId];
-    if (!node) {
-      return;
-    }
-    node.x = payload.x;
-    node.y = payload.y;
-    return;
-  }
-  if (type === "dragEnd") {
-    state.dragNodeId = null;
-  }
+  handleMessageData(data);
 };
+
+Promise.all([
+  import(withVersion("./worker/util.js")),
+  import(withVersion("./worker/state.js")),
+  import(withVersion("./worker/quadtree.js")),
+  import(withVersion("./worker/glyphs.js")),
+  import(withVersion("./worker/radio.js")),
+  import(withVersion("./worker/terrain.js")),
+  import(withVersion("./worker/palette.js")),
+  import(withVersion("./worker/sim.js")),
+  import(withVersion("./worker/render.js")),
+  import(withVersion("./worker/canvas.js")),
+  import(withVersion("./lora_airtime.js")),
+])
+  .then(
+    ([
+      utilMod,
+      stateMod,
+      quadtreeMod,
+      glyphsMod,
+      radioMod,
+      terrainMod,
+      paletteMod,
+      simMod,
+      renderMod,
+      canvasMod,
+      loraMod,
+    ]) => {
+      const state = stateMod.createInitialState();
+      const { palette, defaultNodeColor } = stateMod;
+      const { randomRange, clamp, randomIntInclusive, getDrawScale, formatDistance, chooseNiceScaleMeters } =
+        utilMod;
+
+      const glyphs = glyphsMod.createGlyphs();
+
+      const radio = radioMod.createRadio({
+        clamp,
+        randomRange,
+        randomIntInclusive,
+      });
+
+      const loraFns = {
+        loraTimeOnAirMs: loraMod.loraTimeOnAirMs,
+        loraSymbolTimeMs: loraMod.loraSymbolTimeMs,
+      };
+
+      const terrain = terrainMod.createTerrain({ clamp });
+
+      const paletteUi = paletteMod.createPalette({
+        clamp,
+        getDrawScale,
+        pathNodeGlyph: glyphs.pathNodeGlyph,
+      });
+
+      const sim = simMod.createSim({
+        Quadtree: quadtreeMod.Quadtree,
+        clamp,
+        randomRange,
+        defaultNodeColor,
+        palette,
+        updateEffectiveRange: radio.updateEffectiveRange,
+        estimateCwSizeFromSnr: radio.estimateCwSizeFromSnr,
+        estimateRxSnr: radio.estimateRxSnr,
+        computeRebroadcastDelayMsec: radio.computeRebroadcastDelayMsec,
+        sampleTerrainElevation: terrain.sampleTerrainElevation,
+        applyTerrainToNode: terrain.applyTerrainToNode,
+      });
+
+      const renderer = renderMod.createRenderer({
+        clamp,
+        getDrawScale,
+        formatDistance,
+        chooseNiceScaleMeters,
+        defaultNodeColor,
+        pathNodeGlyph: glyphs.pathNodeGlyph,
+        drawNodePalette: paletteUi.drawNodePalette,
+      });
+
+      function updateEffectiveRangeAndTiming() {
+        radio.updateEffectiveRange(state);
+        radio.updateRadioTiming(state, loraFns);
+      }
+
+      function tick(now) {
+        const deltaReal = now - state.lastTime;
+        state.lastTime = now;
+        const delta = state.paused ? 0 : deltaReal * state.timeScale;
+        if (!state.paused) {
+          state.simTime += delta;
+        }
+        const simNow = state.simTime;
+
+        if (!state.paused && state.dynamic) {
+          sim.updateNodes(state, delta);
+        }
+
+        const neighbors = sim.computeNeighbors(state);
+
+        if (!state.paused) {
+          sim.updateMessages(state, neighbors.neighbors, simNow);
+          sim.updatePulses(state, delta);
+        }
+
+        renderer.draw(state, ctx, neighbors);
+        if (!useExternalClock) {
+          scheduleFrame(tick);
+        }
+      }
+
+      handleMessageData = (data) => {
+        const { type, payload } = data;
+
+        if (type === "init") {
+          canvas = payload.canvas;
+          ctx = canvas.getContext("2d");
+          useExternalClock = Boolean(payload.externalClock);
+
+          state.nodeCount = payload.nodeCount;
+          state.range = payload.range;
+          state.ttl = payload.ttl;
+          state.timeScale = payload.timeScale ?? state.timeScale;
+          state.carrierSenseRange = payload.range;
+          state.useLinkBudget = Boolean(payload.useLinkBudget);
+          state.linkBudgetDb =
+            typeof payload.linkBudgetDb === "number" ? payload.linkBudgetDb : null;
+          state.frequencyMHz =
+            typeof payload.frequencyMHz === "number"
+              ? payload.frequencyMHz
+              : state.frequencyMHz;
+          state.pathLossExp =
+            typeof payload.pathLossExp === "number" ? payload.pathLossExp : state.pathLossExp;
+          state.mapScale = typeof payload.mapScale === "number" ? payload.mapScale : state.mapScale;
+          state.coordinateMode = payload.coordinateMode === "live" ? "live" : "random";
+          state.metersPerPixel =
+            typeof payload.metersPerPixel === "number" && payload.metersPerPixel > 0
+              ? payload.metersPerPixel
+              : state.metersPerPixel;
+          state.txPower = typeof payload.txPower === "number" ? payload.txPower : state.txPower;
+          state.txGain = typeof payload.txGain === "number" ? payload.txGain : state.txGain;
+          state.rxGain = typeof payload.rxGain === "number" ? payload.rxGain : state.rxGain;
+          state.noiseFloor =
+            typeof payload.noiseFloor === "number" ? payload.noiseFloor : state.noiseFloor;
+
+          if (payload.loraPayloadBytes !== undefined) {
+            state.loraPayloadBytes = payload.loraPayloadBytes;
+          }
+          if (payload.loraSpreadingFactor !== undefined) {
+            state.loraSpreadingFactor = payload.loraSpreadingFactor;
+          }
+          if (payload.loraBandwidthHz !== undefined) {
+            state.loraBandwidthHz = payload.loraBandwidthHz;
+          }
+          if (payload.loraCodingRate !== undefined) {
+            state.loraCodingRate = payload.loraCodingRate;
+          }
+          if (payload.loraPreambleSymbols !== undefined) {
+            state.loraPreambleSymbols = payload.loraPreambleSymbols;
+          }
+          if (payload.loraExplicitHeader !== undefined) {
+            state.loraExplicitHeader = Boolean(payload.loraExplicitHeader);
+          }
+          if (payload.loraCrcEnabled !== undefined) {
+            state.loraCrcEnabled = Boolean(payload.loraCrcEnabled);
+          }
+          if (payload.loraLowDataRateOptimize !== undefined) {
+            state.loraLowDataRateOptimize = Boolean(payload.loraLowDataRateOptimize);
+          }
+
+          updateEffectiveRangeAndTiming();
+          canvasMod.resizeCanvas(state, canvas, ctx, payload.width, payload.height, payload.dpr);
+          sim.resetSimulation(state);
+          state.lastTime = performance.now();
+          state.simTime = 0;
+          if (!useExternalClock) {
+            scheduleFrame(tick);
+          }
+          return;
+        }
+
+        if (type === "tick") {
+          if (useExternalClock) {
+            tick(payload.now);
+          }
+          return;
+        }
+
+        if (type === "resize") {
+          const prevWidth = state.width;
+          const prevHeight = state.height;
+          canvasMod.resizeCanvas(state, canvas, ctx, payload.width, payload.height, payload.dpr);
+          if (prevWidth > 0 && prevHeight > 0 && state.nodes.length > 0) {
+            const scaleX = state.width / prevWidth;
+            const scaleY = state.height / prevHeight;
+            for (const node of state.nodes) {
+              node.x *= scaleX;
+              node.y *= scaleY;
+            }
+            for (const transmission of state.activeTransmissions) {
+              transmission.x *= scaleX;
+              transmission.y *= scaleY;
+            }
+          }
+          return;
+        }
+
+        if (type === "pause") {
+          state.paused = payload.paused;
+          return;
+        }
+
+        if (type === "reset") {
+          sim.resetSimulation(state);
+          return;
+        }
+
+        if (type === "export") {
+          self.postMessage({
+            type: "export",
+            payload: {
+              saved_at: new Date().toISOString(),
+              range: state.range,
+              carrierSenseRange: state.carrierSenseRange,
+              nodeCount: state.nodeCount,
+              ttl: state.ttl,
+              timeScale: state.timeScale,
+              useLinkBudget: state.useLinkBudget,
+              linkBudgetDb: state.linkBudgetDb,
+              frequencyMHz: state.frequencyMHz,
+              pathLossExp: state.pathLossExp,
+              txPower: state.txPower,
+              txGain: state.txGain,
+              rxGain: state.rxGain,
+              noiseFloor: state.noiseFloor,
+              metersPerPixel: state.metersPerPixel,
+              mapScale: state.mapScale,
+              coordinateMode: state.coordinateMode,
+              lora: {
+                payloadBytes: state.loraPayloadBytes,
+                spreadingFactor: state.loraSpreadingFactor,
+                bandwidthHz: state.loraBandwidthHz,
+                codingRate: state.loraCodingRate,
+                preambleSymbols: state.loraPreambleSymbols,
+                explicitHeader: state.loraExplicitHeader,
+                crcEnabled: state.loraCrcEnabled,
+                lowDataRateOptimize: state.loraLowDataRateOptimize,
+                onAirTimeMs: state.onAirTime,
+                slotTimeMsec: state.slotTimeMsec,
+                cadTimeMsec: state.cadTimeMsec,
+              },
+              nodes: state.nodes.map((node) => ({
+                id: node.id,
+                node_id: node.nodeId,
+                x: node.x,
+                y: node.y,
+                range: node.range ?? state.range,
+                carrierSenseRange: node.carrierSenseRange ?? state.carrierSenseRange,
+                pinned: node.pinned,
+                role: node.role ?? "CLIENT",
+                elevation: node.elevation,
+              })),
+            },
+          });
+          return;
+        }
+
+        if (type === "import") {
+          const imported = Array.isArray(payload.nodes) ? payload.nodes : [];
+          if (imported.length === 0) {
+            return;
+          }
+          state.range = typeof payload.range === "number" ? payload.range : state.range;
+          state.carrierSenseRange =
+            typeof payload.carrierSenseRange === "number"
+              ? payload.carrierSenseRange
+              : state.carrierSenseRange;
+          state.nodeCount = imported.length;
+          state.messages = [];
+          state.nextMessageId = 1;
+          state.activeTransmissions = [];
+          state.lastTransmissionCount = 0;
+          state.lastMessageId = 0;
+          state.nodes = imported.map((node, index) => ({
+            id: index,
+            nodeId: typeof node.node_id === "number" ? node.node_id : index,
+            x: node.x,
+            y: node.y,
+            vx: randomRange(-0.4, 0.4),
+            vy: randomRange(-0.4, 0.4),
+            pinned: Boolean(node.pinned),
+            terrainDriven: typeof node.elevation !== "number",
+            role: node.role === "ROUTER" || node.role === "CLIENT_MUTE" ? node.role : "CLIENT",
+            pendingTransmits: new Map(),
+            received: new Set(),
+            pulses: [],
+            collisionUntil: 0,
+            range:
+              typeof node.range === "number"
+                ? node.range
+                : typeof payload.range === "number"
+                  ? payload.range
+                  : state.range,
+            carrierSenseRange:
+              typeof node.carrierSenseRange === "number"
+                ? node.carrierSenseRange
+                : typeof payload.carrierSenseRange === "number"
+                  ? payload.carrierSenseRange
+                  : state.carrierSenseRange,
+            lastColor: defaultNodeColor,
+            elevation:
+              typeof node.elevation === "number"
+                ? node.elevation
+                : terrain.sampleTerrainElevation(state, node.x, node.y),
+          }));
+          return;
+        }
+
+        if (type === "resetColors") {
+          for (const node of state.nodes) {
+            node.lastColor = defaultNodeColor;
+          }
+          state.lastTransmissionCount = 0;
+          state.lastMessageId = 0;
+          return;
+        }
+
+        if (type === "setParams") {
+          if (payload.nodeCount !== undefined) {
+            state.nodeCount = payload.nodeCount;
+            if (state.nodes.length !== payload.nodeCount) {
+              sim.resetSimulation(state);
+            }
+          }
+          if (payload.range !== undefined) {
+            state.range = payload.range;
+            state.carrierSenseRange = payload.range;
+            updateEffectiveRangeAndTiming();
+            if (!state.useLinkBudget) {
+              for (const node of state.nodes) {
+                node.range = state.range;
+                node.carrierSenseRange = state.carrierSenseRange;
+              }
+            }
+          }
+          if (payload.ttl !== undefined) {
+            state.ttl = payload.ttl;
+          }
+          if (payload.timeScale !== undefined) {
+            state.timeScale = payload.timeScale;
+          }
+          if (payload.useLinkBudget !== undefined) {
+            state.useLinkBudget = Boolean(payload.useLinkBudget);
+          }
+          if (payload.linkBudgetDb !== undefined) {
+            state.linkBudgetDb =
+              typeof payload.linkBudgetDb === "number" ? payload.linkBudgetDb : null;
+          }
+          if (payload.frequencyMHz !== undefined) {
+            state.frequencyMHz =
+              typeof payload.frequencyMHz === "number"
+                ? payload.frequencyMHz
+                : state.frequencyMHz;
+          }
+          if (payload.pathLossExp !== undefined) {
+            state.pathLossExp =
+              typeof payload.pathLossExp === "number" ? payload.pathLossExp : state.pathLossExp;
+          }
+          if (payload.txPower !== undefined) {
+            state.txPower = typeof payload.txPower === "number" ? payload.txPower : state.txPower;
+          }
+          if (payload.txGain !== undefined) {
+            state.txGain = typeof payload.txGain === "number" ? payload.txGain : state.txGain;
+          }
+          if (payload.rxGain !== undefined) {
+            state.rxGain = typeof payload.rxGain === "number" ? payload.rxGain : state.rxGain;
+          }
+          if (payload.noiseFloor !== undefined) {
+            state.noiseFloor =
+              typeof payload.noiseFloor === "number" ? payload.noiseFloor : state.noiseFloor;
+          }
+
+          if (payload.loraPayloadBytes !== undefined) {
+            state.loraPayloadBytes = payload.loraPayloadBytes;
+          }
+          if (payload.loraSpreadingFactor !== undefined) {
+            state.loraSpreadingFactor = payload.loraSpreadingFactor;
+          }
+          if (payload.loraBandwidthHz !== undefined) {
+            state.loraBandwidthHz = payload.loraBandwidthHz;
+          }
+          if (payload.loraCodingRate !== undefined) {
+            state.loraCodingRate = payload.loraCodingRate;
+          }
+          if (payload.loraPreambleSymbols !== undefined) {
+            state.loraPreambleSymbols = payload.loraPreambleSymbols;
+          }
+          if (payload.loraExplicitHeader !== undefined) {
+            state.loraExplicitHeader = Boolean(payload.loraExplicitHeader);
+          }
+          if (payload.loraCrcEnabled !== undefined) {
+            state.loraCrcEnabled = Boolean(payload.loraCrcEnabled);
+          }
+          if (payload.loraLowDataRateOptimize !== undefined) {
+            state.loraLowDataRateOptimize = Boolean(payload.loraLowDataRateOptimize);
+          }
+
+          if (payload.mapScale !== undefined) {
+            state.mapScale = typeof payload.mapScale === "number" ? payload.mapScale : state.mapScale;
+          }
+          if (payload.coordinateMode !== undefined) {
+            state.coordinateMode = payload.coordinateMode === "live" ? "live" : "random";
+          }
+          if (payload.metersPerPixel !== undefined) {
+            if (typeof payload.metersPerPixel === "number" && payload.metersPerPixel > 0) {
+              state.metersPerPixel = payload.metersPerPixel;
+            }
+          }
+
+          updateEffectiveRangeAndTiming();
+          if (state.useLinkBudget) {
+            for (const node of state.nodes) {
+              node.range = state.effectiveRange;
+              node.carrierSenseRange = state.effectiveRange;
+            }
+          }
+          return;
+        }
+
+        if (type === "setNodePositions") {
+          const incoming = Array.isArray(payload.nodes) ? payload.nodes : [];
+          if (incoming.length === 0) {
+            return;
+          }
+          if (state.nodes.length === 0 || incoming.length > state.nodes.length) {
+            state.nodeCount = incoming.length;
+            state.messages = [];
+            state.nextMessageId = 1;
+            state.activeTransmissions = [];
+            state.lastTransmissionCount = 0;
+            state.lastMessageId = 0;
+            state.nodes = incoming.map((node, index) => ({
+              id: index,
+              nodeId: typeof node.node_id === "number" ? node.node_id : index,
+              x: node.x,
+              y: node.y,
+              vx: randomRange(-0.4, 0.4),
+              vy: randomRange(-0.4, 0.4),
+              pinned: false,
+              terrainDriven: typeof node.elevation !== "number",
+              role: node.role === "ROUTER" || node.role === "CLIENT_MUTE" ? node.role : "CLIENT",
+              pendingTransmits: new Map(),
+              received: new Set(),
+              pulses: [],
+              collisionUntil: 0,
+              range: state.range,
+              carrierSenseRange: state.carrierSenseRange,
+              lastColor: defaultNodeColor,
+              elevation: typeof node.elevation === "number" ? node.elevation : null,
+            }));
+            for (const node of state.nodes) {
+              terrain.applyTerrainToNode(state, node);
+            }
+            return;
+          }
+
+          state.nodeCount = state.nodes.length;
+          for (let i = 0; i < state.nodes.length; i += 1) {
+            const node = state.nodes[i];
+            const next = incoming[i];
+            if (!node || !next) {
+              continue;
+            }
+            node.x = next.x;
+            node.y = next.y;
+            if (typeof next.node_id === "number") {
+              node.nodeId = next.node_id;
+            }
+            if (typeof next.elevation === "number") {
+              node.elevation = next.elevation;
+              node.terrainDriven = false;
+            } else {
+              terrain.applyTerrainToNode(state, node);
+            }
+            if (next.role === "ROUTER" || next.role === "CLIENT" || next.role === "CLIENT_MUTE") {
+              node.role = next.role;
+            }
+          }
+          return;
+        }
+
+        if (type === "hover") {
+          const node = sim.findNodeAt(state, payload.x, payload.y);
+          state.hoverNodeId = node ? node.id : null;
+          return;
+        }
+
+        if (type === "hoverEnd") {
+          state.hoverNodeId = null;
+          return;
+        }
+
+        if (type === "click") {
+          if (paletteUi.paletteRoleAt(state, payload.x, payload.y)) {
+            return;
+          }
+          const node = sim.findNodeAt(state, payload.x, payload.y);
+          if (!node) {
+            return;
+          }
+          if (payload.shiftKey) {
+            node.pinned = !node.pinned;
+            node.vx = randomRange(-0.4, 0.4);
+            node.vy = randomRange(-0.4, 0.4);
+            return;
+          }
+          sim.injectMessage(state, node);
+          return;
+        }
+
+        if (type === "dragStart") {
+          state.dragPointer = { x: payload.x, y: payload.y };
+          const paletteRole = paletteUi.paletteRoleAt(state, payload.x, payload.y);
+          if (paletteRole) {
+            state.dragNewRole = paletteRole;
+            self.postMessage({ type: "suppressClickOnce" });
+            return;
+          }
+          const node = sim.findNodeAt(state, payload.x, payload.y);
+          if (!node) {
+            state.dragNodeId = null;
+            return;
+          }
+          state.dragNodeId = node.id;
+          node.terrainDriven = true;
+          return;
+        }
+
+        if (type === "dragMove") {
+          state.dragPointer = { x: payload.x, y: payload.y };
+          if (state.dragNewRole) {
+            return;
+          }
+          if (state.dragNodeId === null) {
+            return;
+          }
+          const node = state.nodes[state.dragNodeId];
+          if (!node) {
+            return;
+          }
+          node.x = payload.x;
+          node.y = payload.y;
+          if (node.terrainDriven) {
+            terrain.applyTerrainToNode(state, node, true);
+          }
+          return;
+        }
+
+        if (type === "dragEnd") {
+          if (state.dragNewRole) {
+            const role = state.dragNewRole;
+            state.dragNewRole = null;
+            if (!paletteUi.paletteRoleAt(state, state.dragPointer.x, state.dragPointer.y)) {
+              const nodeCount = sim.addNodeAt(state, state.dragPointer.x, state.dragPointer.y, role);
+              self.postMessage({ type: "nodeCount", payload: { nodeCount } });
+            }
+            return;
+          }
+          state.dragNodeId = null;
+          return;
+        }
+
+        if (type === "setTerrain") {
+          const grid = payload && Array.isArray(payload.grid) ? payload.grid : null;
+          if (!grid || !Number.isFinite(payload.width) || !Number.isFinite(payload.height)) {
+            return;
+          }
+          state.terrain = {
+            bbox: payload.bbox ?? null,
+            width: Number(payload.width),
+            height: Number(payload.height),
+            min_elevation_m: payload.min_elevation_m ?? payload.minElevation ?? null,
+            max_elevation_m: payload.max_elevation_m ?? payload.maxElevation ?? null,
+            grid,
+          };
+          terrain.rebuildTerrainLayer(state);
+          for (const node of state.nodes) {
+            terrain.applyTerrainToNode(state, node);
+          }
+          return;
+        }
+
+        if (type === "clearTerrain") {
+          state.terrain = null;
+          state.terrainLayer = null;
+          return;
+        }
+      };
+
+      for (const queued of pendingMessages.splice(0)) {
+        handleMessageData(queued);
+      }
+    }
+  )
+  .catch((error) => {
+    self.postMessage({
+      type: "workerInitError",
+      payload: { message: error && error.message ? error.message : String(error) },
+    });
+  });
