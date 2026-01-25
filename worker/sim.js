@@ -8,18 +8,86 @@ export function createSim({
   estimateCwSizeFromSnr,
   estimateRxSnr,
   computeRebroadcastDelayMsec,
+  hasLineOfSightCurvature,
   sampleTerrainElevation,
   applyTerrainToNode,
 }) {
+  function getEarthRadiusMeters(state) {
+    return Number.isFinite(state.earthRadiusM) && state.earthRadiusM > 0 ? state.earthRadiusM : 6371000;
+  }
+
+  function getNodeHeightMeters(state, node) {
+    if (Number.isFinite(node?.heightM) && node.heightM >= 0) {
+      return node.heightM;
+    }
+    if (Number.isFinite(state.defaultNodeHeightM) && state.defaultNodeHeightM >= 0) {
+      return state.defaultNodeHeightM;
+    }
+    return 2;
+  }
+
+  function computeHorizonMeters(earthRadiusM, heightM) {
+    const R = Number(earthRadiusM);
+    const h = Math.max(0, Number(heightM) || 0);
+    return Math.sqrt(2 * R * h + h * h);
+  }
+
+  function getDistanceMeters(state, dxPx, dyPx) {
+    const distPx = Math.hypot(dxPx, dyPx);
+    const mapScale = Number.isFinite(state.mapScale) && state.mapScale > 0 ? state.mapScale : 1;
+    if (Number.isFinite(state.metersPerPixel) && state.metersPerPixel > 0) {
+      return (distPx * state.metersPerPixel) / mapScale;
+    }
+    // Fallback: approximate 1 px == 1 meter.
+    return distPx / mapScale;
+  }
+
+  function hasCurvatureLos(state, a, b, dxPx, dyPx) {
+    if (typeof hasLineOfSightCurvature !== "function") {
+      return true;
+    }
+    const earthRadiusM =
+      Number.isFinite(state.earthRadiusM) && state.earthRadiusM > 0 ? state.earthRadiusM : 6371000;
+    const ha =
+      Number.isFinite(a?.heightM) && a.heightM >= 0 ? a.heightM : state.defaultNodeHeightM ?? 2;
+    const hb =
+      Number.isFinite(b?.heightM) && b.heightM >= 0 ? b.heightM : state.defaultNodeHeightM ?? 2;
+    const distanceM = getDistanceMeters(state, dxPx, dyPx);
+    return hasLineOfSightCurvature(distanceM, ha, hb, earthRadiusM);
+  }
+
   function getNodeRange(state, node) {
     const base = state.useLinkBudget ? state.effectiveRange : node.range ?? state.range;
     if (state.useLinkBudget) {
       if (!Number.isFinite(state.metersPerPixel) || state.metersPerPixel <= 0) {
         return base * state.mapScale;
       }
-      return (base / state.metersPerPixel) * state.mapScale;
+      const rangePx = (base / state.metersPerPixel) * state.mapScale;
+      const maxHeight =
+        Number.isFinite(state.maxNodeHeightM) && state.maxNodeHeightM >= 0
+          ? state.maxNodeHeightM
+          : getNodeHeightMeters(state, node);
+      const earthRadiusM = getEarthRadiusMeters(state);
+      const maxLosMeters =
+        computeHorizonMeters(earthRadiusM, getNodeHeightMeters(state, node)) +
+        computeHorizonMeters(earthRadiusM, maxHeight);
+      const maxLosPx = (maxLosMeters / state.metersPerPixel) * state.mapScale;
+      return Math.min(rangePx, maxLosPx);
     }
-    return base * state.mapScale;
+    const rangePx = base * state.mapScale;
+    if (!Number.isFinite(state.metersPerPixel) || state.metersPerPixel <= 0) {
+      return rangePx;
+    }
+    const maxHeight =
+      Number.isFinite(state.maxNodeHeightM) && state.maxNodeHeightM >= 0
+        ? state.maxNodeHeightM
+        : getNodeHeightMeters(state, node);
+    const earthRadiusM = getEarthRadiusMeters(state);
+    const maxLosMeters =
+      computeHorizonMeters(earthRadiusM, getNodeHeightMeters(state, node)) +
+      computeHorizonMeters(earthRadiusM, maxHeight);
+    const maxLosPx = (maxLosMeters / state.metersPerPixel) * state.mapScale;
+    return Math.min(rangePx, maxLosPx);
   }
 
   function getCarrierSenseRange(state, node) {
@@ -30,9 +98,32 @@ export function createSim({
       if (!Number.isFinite(state.metersPerPixel) || state.metersPerPixel <= 0) {
         return base * state.mapScale;
       }
-      return (base / state.metersPerPixel) * state.mapScale;
+      const rangePx = (base / state.metersPerPixel) * state.mapScale;
+      const maxHeight =
+        Number.isFinite(state.maxNodeHeightM) && state.maxNodeHeightM >= 0
+          ? state.maxNodeHeightM
+          : getNodeHeightMeters(state, node);
+      const earthRadiusM = getEarthRadiusMeters(state);
+      const maxLosMeters =
+        computeHorizonMeters(earthRadiusM, getNodeHeightMeters(state, node)) +
+        computeHorizonMeters(earthRadiusM, maxHeight);
+      const maxLosPx = (maxLosMeters / state.metersPerPixel) * state.mapScale;
+      return Math.min(rangePx, maxLosPx);
     }
-    return base * state.mapScale;
+    const rangePx = base * state.mapScale;
+    if (!Number.isFinite(state.metersPerPixel) || state.metersPerPixel <= 0) {
+      return rangePx;
+    }
+    const maxHeight =
+      Number.isFinite(state.maxNodeHeightM) && state.maxNodeHeightM >= 0
+        ? state.maxNodeHeightM
+        : getNodeHeightMeters(state, node);
+    const earthRadiusM = getEarthRadiusMeters(state);
+    const maxLosMeters =
+      computeHorizonMeters(earthRadiusM, getNodeHeightMeters(state, node)) +
+      computeHorizonMeters(earthRadiusM, maxHeight);
+    const maxLosPx = (maxLosMeters / state.metersPerPixel) * state.mapScale;
+    return Math.min(rangePx, maxLosPx);
   }
 
   function createNodes(state) {
@@ -61,6 +152,7 @@ export function createSim({
         carrierSenseRange: state.carrierSenseRange,
         lastColor: defaultNodeColor,
         elevation: sampleTerrainElevation(state, x, y),
+        heightM: state.defaultNodeHeightM ?? 2,
       });
     }
     state.nodes = nodes;
@@ -74,6 +166,15 @@ export function createSim({
   }
 
   function computeNeighbors(state) {
+    let maxHeightM = null;
+    for (const node of state.nodes) {
+      const heightM = getNodeHeightMeters(state, node);
+      if (maxHeightM === null || heightM > maxHeightM) {
+        maxHeightM = heightM;
+      }
+    }
+    state.maxNodeHeightM = maxHeightM === null ? state.defaultNodeHeightM ?? 2 : maxHeightM;
+
     const tree = new Quadtree({ x: 0, y: 0, w: state.width, h: state.height });
     for (const node of state.nodes) {
       tree.insert({ x: node.x, y: node.y, id: node.id });
@@ -99,6 +200,10 @@ export function createSim({
         const dx = node.x - candidate.x;
         const dy = node.y - candidate.y;
         if (dx * dx + dy * dy <= nodeRange * nodeRange) {
+          const other = state.nodes[candidate.id];
+          if (other && !hasCurvatureLos(state, node, other, dx, dy)) {
+            continue;
+          }
           nearby.push(candidate.id);
           const a = Math.min(node.id, candidate.id);
           const b = Math.max(node.id, candidate.id);
@@ -164,6 +269,21 @@ export function createSim({
       const dx = node.x - transmission.x;
       const dy = node.y - transmission.y;
       if (dx * dx + dy * dy <= senseRangeSq) {
+        const earthRadiusM =
+          Number.isFinite(state.earthRadiusM) && state.earthRadiusM > 0 ? state.earthRadiusM : 6371000;
+        const rxHeight =
+          Number.isFinite(node?.heightM) && node.heightM >= 0 ? node.heightM : state.defaultNodeHeightM ?? 2;
+        const txHeight =
+          Number.isFinite(transmission?.heightM) && transmission.heightM >= 0
+            ? transmission.heightM
+            : state.defaultNodeHeightM ?? 2;
+        const distanceM = getDistanceMeters(state, dx, dy);
+        if (
+          typeof hasLineOfSightCurvature === "function" &&
+          !hasLineOfSightCurvature(distanceM, rxHeight, txHeight, earthRadiusM)
+        ) {
+          continue;
+        }
         if (earliestEnd === null || transmission.endTime < earliestEnd) {
           earliestEnd = transmission.endTime;
         }
@@ -270,6 +390,7 @@ export function createSim({
                   startAt: now,
                   readyAt,
                   color: message.color,
+                  direction: "ccw",
                 });
               }
             }
@@ -327,10 +448,14 @@ export function createSim({
           if (!(sender.pendingTransmits instanceof Map)) {
             sender.pendingTransmits = new Map();
           }
+          const prev = sender.pendingTransmits.get(message.id);
+          const prevDir = prev && typeof prev.direction === "string" ? prev.direction : null;
+          const nextDir = prevDir === "ccw" ? "cw" : "ccw";
           sender.pendingTransmits.set(message.id, {
             startAt: now,
             readyAt: newReadyAt,
             color: message.color,
+            direction: nextDir,
           });
           continue;
         }
@@ -361,9 +486,14 @@ export function createSim({
           message.transmissions += 1;
         }
         state.activeTransmissions.push({
+          nodeId: sender.id,
           x: sender.x,
           y: sender.y,
           endTime: now + state.onAirTime,
+          heightM:
+            Number.isFinite(sender?.heightM) && sender.heightM >= 0
+              ? sender.heightM
+              : state.defaultNodeHeightM ?? 2,
         });
       }
     }
@@ -462,6 +592,7 @@ export function createSim({
       carrierSenseRange: senseRange,
       lastColor: defaultNodeColor,
       elevation: sampleTerrainElevation(state, nx, ny),
+      heightM: state.defaultNodeHeightM ?? 2,
     });
     state.nodeCount = state.nodes.length;
     return state.nodeCount;
@@ -481,4 +612,3 @@ export function createSim({
     addNodeAt,
   };
 }
-

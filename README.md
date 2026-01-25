@@ -1,38 +1,51 @@
 # Mesh Flood Routing Simulator
 
-A browser-based canvas simulation of flood routing in a mesh network. Nodes are mostly static, can be dragged to new positions, and can broadcast flood messages. The simulation models on-air transmission time, distance-based relay delay, and hop limits.
+A browser-based canvas simulation of flood routing in a mesh network (Meshtastic-inspired). Nodes can be dragged, you can inject floods, and the simulation models LoRa on-air time plus timing/backoff behavior.
 
 ## Features
 - **Canvas visualization** of mesh nodes, links, and flood waves.
 - **Flood routing** with duplicate suppression and max hop count (TTL).
-- **Transmission timing model**:
-  - Each transmission’s **on-air time** is computed from the selected LoRa modulation preset (Semtech ToA formula; defaults to a 20-byte PHY payload).
-  - After receiving, a node waits an **inverse-distance delay** up to **500 ms** before relaying.
-    - 10% of max range → ~450 ms delay.
-    - 50% of max range → ~250 ms delay.
-    - 90% of max range → ~50 ms delay.
-- **Time scale control** to slow the entire simulation (10%–100%).
-- **Transmission counter** for the most recently completed flood.
+- **LoRa airtime** computed from Semtech ToA math for the selected modulation preset + packet size.
+- **Backoff + LBT/CAD-style retry**: nodes schedule rebroadcasts and will backoff if the channel is busy.
+- **Time scale control** to slow the simulation (10%–100%).
+- **On-canvas scale bar** (lower-right) and `m/px` readout for the current view.
 - **Worker-based rendering/simulation** using `OffscreenCanvas`.
-- **Persistent node coloring**: nodes keep the color of the last packet they transmitted.
+- **Persistent node coloring**: nodes keep the color of the last packet they received/transmitted.
 - **Reset node colors** button to restore all nodes to white.
-- **Load live data** button to fetch normalized node positions from a remote endpoint.
+- **Export/Import** simulation state to/from a JSON file (browser download + file upload).
+- **Node types**:
+  - `ROUTER` (star), `CLIENT` (circle), `CLIENT_MUTE` (triangle; receives but never retransmits).
+- **Simplified curvature LOS** (perfect sphere) using each node’s height above local ground.
 
-## Latest updates (0.1.0)
-- On-air time uses Semtech LoRa calculations per preset and packet size; manual range uses Long/Fast timing.
-- SNR-weighted rebroadcast backoff and CAD-style busy retry approximate Meshtastic timing behavior.
-- Packet size spinner updates airtime and simulation timing.
-- Added a draggable node palette (router/client/client_mute) to add nodes on the canvas.
-- UI controls moved into a left sidebar; map pan/zoom only appears after loading live data.
+## Quick start (frontend only)
+Because the app uses ES modules + a Web Worker, it must be served over HTTP.
+
+```bash
+python3 -m http.server 8000
+```
+
+Open `http://localhost:8000/`.
+
+## Quick start (Docker + PHP endpoints)
+If you want the PHP endpoints (`dem_elevation.php`, `node_positions_proxy.php`, etc), run via Docker.
+
+```bash
+cp .env.example .env
+# edit .env with your DB + proxy settings
+docker compose up --build
+```
+
+Then open whatever port your `docker-compose.yml` exposes (commonly `http://localhost:8080/`).
 
 ## Controls
 - **Click a node**: inject a flood message from that node.
-- **Shift-click**: toggle pin/unpin (reserved for future movement behaviors).
-- **Drag a node**: reposition the node without triggering a flood.
-- **Reset**: regenerate node positions.
-- **Pause**: freeze the simulation clock.
+- **Shift-click**: pin/unpin a node (prevents movement in dynamic mode; also useful while dragging others).
+- **Drag a node**: reposition without triggering a flood.
+- **Drag from the palette** (lower-left): add a router/client/mute node.
 - **Reset Node Colors**: restore all nodes to white.
-- **Load Live Data**: fetch the latest node map from the configured endpoint.
+- **Download**: export the current node layout (and sim parameters) as JSON.
+- **Load**: import a previously exported JSON file.
+- **Save**: export a “state” JSON file (same mechanism; useful for snapshots).
 - **Node Count**: set the number of nodes.
 - **Range**: adjust communication radius.
 - **Time Scale**: slow down or speed up the simulation clock.
@@ -42,27 +55,20 @@ A browser-based canvas simulation of flood routing in a mesh network. Nodes are 
 - Nodes are indexed in a quadtree each frame for fast neighbor lookups.
 - A flood message maintains a transmit queue and pending receives.
 - When a node transmits, neighbors schedule receive events after the on-air time.
-- When a receive occurs, the node schedules its relay with an inverse-distance delay.
+- When a receive occurs, the node schedules its relay with a role-dependent backoff window.
+- Duplicate suppression prevents retransmitting the same flood ID twice (but nodes can still “hear” the final hop).
 - Pulses render on transmit and expand to full range over the on-air time.
+- Curvature LOS is applied using node height AGL (defaults to `2m`) and a spherical Earth.
 
 ## Algorithm overview
-1. Build a quadtree over all node positions to support fast radius queries.\n
-2. On flood injection, enqueue the origin node for immediate transmit.\n
-3. Each tick:\n
-   - Process pending receives whose time has arrived.\n
-   - For each receive, mark the node as having seen the message and enqueue a relay after an inverse-distance delay.\n
-   - Process transmit events whose time has arrived.\n
-   - For each transmit, schedule neighbor receives after the on-air time, suppressing duplicates.\n
-4. Remove floods that have no pending transmit/receive events.\n
-
-## Running locally
-Because the app uses ES modules and a Web Worker, it must be served over HTTP.
-
-```bash
-python3 -m http.server 8000
-```
-
-Then open `http://localhost:8000/` in your browser.
+1. Build a quadtree over all node positions to support fast radius queries.
+2. On flood injection, enqueue the origin node for transmit after CAD time.
+3. Each tick:
+   - Process pending receives whose time has arrived (collisions are modeled if overlapping).
+   - For each receive, mark the node as having seen the message; enqueue a relay if allowed by TTL + role.
+   - Process transmit events whose time has arrived; if carrier sense indicates busy, requeue with backoff.
+   - For each transmit, schedule neighbor receives after the on-air time, suppressing duplicates.
+4. Remove floods that have no pending transmit/receive events.
 
 ## Server-side endpoints config
 The PHP endpoints (`node_positions.php`, `dem_elevation.php`, `radio_los.php`) read database settings
@@ -72,7 +78,12 @@ loads `.env` into the container environment (no DB defaults are hardcoded in PHP
 ## Files
 - `index.html`: layout and UI controls.
 - `style.css`: visual styling.
-- `main.js`: UI wiring, worker setup, and input forwarding.
+- `main.js`: Small bootloader that loads the UI module with cache-busting.
+- `app/main_app.js`: UI orchestrator (imports app modules with cache-busting).
+- `app/worker_bridge.js`: Worker creation, clock, and canvas input forwarding.
+- `app/controls.js`: RF/LoRa UI controls and fixed parameters.
+- `app/state_io.js`: Export/import (download, load, save) wiring.
+- `app/live_map.js`: Optional Leaflet live-map integration.
 - `worker.js`: simulation engine and renderer.
 - `node_positions.php`: server-side endpoint for pulling recent node positions and normalizing to canvas size.
 - `terrain_grid.php`: server-side endpoint that samples a DEM into a grid (currently not wired into the UI).
@@ -81,6 +92,9 @@ loads `.env` into the container environment (no DB defaults are hardcoded in PHP
 The codebase includes a `node_positions_proxy.php` helper that can call an upstream
 node-positions service. Configure the upstream URL via `NODE_POSITIONS_REMOTE_URL`
 in `.env` when you want to re-enable that workflow.
+
+Note: the UI wiring expects an optional button with `id="loadLive"`; if it is not present,
+the live-load flow is effectively disabled (but the code paths remain).
 
 Example response:
 ```json

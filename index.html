@@ -50,7 +50,7 @@
           </label>
           <label>
             Packet Size (bytes)
-            <input id="packetSize" type="number" min="20" max="250" step="1" value="20" />
+            <input id="packetSize" type="number" min="20" max="250" step="1" value="50" />
           </label>
           <div class="controls__fixed" aria-label="Fixed RF characteristics">
             <div class="controls__fixedTitle">RF (fixed)</div>
@@ -95,7 +95,7 @@
       crossorigin=""
     ></script>
     <script>
-      window.APP_VERSION = "0.1.5";
+      window.APP_VERSION = "0.1.21";
       const versionEl = document.getElementById("appVersion");
       if (versionEl) {
         versionEl.textContent = `v${window.APP_VERSION}`;

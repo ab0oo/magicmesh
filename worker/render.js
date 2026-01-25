@@ -15,24 +15,36 @@ export function createRenderer({
       return;
     }
 
+    const mapScale = Number.isFinite(state.mapScale) && state.mapScale > 0 ? state.mapScale : 1;
+    const metersPerScreenPx = state.metersPerPixel / mapScale;
+    if (!Number.isFinite(metersPerScreenPx) || metersPerScreenPx <= 0) {
+      return;
+    }
+
     const margin = 16;
     const barHeight = 6;
     const available = Math.max(0, state.width - margin * 2);
     const targetPx = Math.min(220, Math.max(90, available * 0.18));
-    const targetMeters = targetPx * state.metersPerPixel;
+    const targetMeters = targetPx * metersPerScreenPx;
     const barMeters = chooseNiceScaleMeters(targetMeters);
-    const barPx = Math.max(20, Math.min(available, barMeters / state.metersPerPixel));
+    const barPx = Math.max(20, Math.min(available, barMeters / metersPerScreenPx));
 
-    const x0 = margin;
-    const y0 = state.height - 44 - bottomOffset;
-    const x1 = x0 + barPx;
+    const yBase = state.height - 2 - bottomOffset;
+    const x1 = state.width - margin;
+    const x0 = x1 - barPx;
 
     ctx.save();
     ctx.globalAlpha = 1;
     ctx.lineCap = "butt";
 
     const label1 = formatDistance(barMeters);
-    const label2 = `${state.metersPerPixel} m/px`;
+    const metersPerPxLabel =
+      metersPerScreenPx >= 10
+        ? metersPerScreenPx.toFixed(0)
+        : metersPerScreenPx >= 1
+          ? metersPerScreenPx.toFixed(1)
+          : metersPerScreenPx.toFixed(2);
+    const label2 = `${metersPerPxLabel} m/px`;
     ctx.font = "12px 'Space Grotesk', sans-serif";
     const textWidth = Math.max(
       ctx.measureText(label1).width,
@@ -44,10 +56,12 @@ export function createRenderer({
     ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
     ctx.lineWidth = 1;
     ctx.beginPath();
+    const boxX = x1 - boxWidth + 8;
+    const boxY = yBase - boxHeight - 8;
     if (typeof ctx.roundRect === "function") {
-      ctx.roundRect(x0 - 8, y0 - 28, boxWidth, boxHeight, 10);
+      ctx.roundRect(boxX, boxY, boxWidth, boxHeight, 10);
     } else {
-      ctx.rect(x0 - 8, y0 - 28, boxWidth, boxHeight);
+      ctx.rect(boxX, boxY, boxWidth, boxHeight);
     }
     ctx.fill();
     ctx.stroke();
@@ -55,22 +69,22 @@ export function createRenderer({
     ctx.strokeStyle = "rgba(243, 247, 255, 0.9)";
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x1, y0);
+    ctx.moveTo(x0, yBase);
+    ctx.lineTo(x1, yBase);
     ctx.stroke();
 
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(x0, y0 - barHeight);
-    ctx.lineTo(x0, y0 + barHeight);
-    ctx.moveTo(x1, y0 - barHeight);
-    ctx.lineTo(x1, y0 + barHeight);
+    ctx.moveTo(x0, yBase - barHeight);
+    ctx.lineTo(x0, yBase);
+    ctx.moveTo(x1, yBase - barHeight);
+    ctx.lineTo(x1, yBase);
     ctx.stroke();
 
     ctx.fillStyle = "rgba(243, 247, 255, 0.95)";
-    ctx.fillText(label1, x0, y0 - 10);
+    ctx.fillText(label1, boxX + 8, boxY + 14);
     ctx.fillStyle = "rgba(159, 176, 197, 0.95)";
-    ctx.fillText(label2, x0, y0 + 14);
+    ctx.fillText(label2, boxX + 8, boxY + 30);
 
     ctx.restore();
   }
@@ -88,7 +102,7 @@ export function createRenderer({
     }
 
     const paletteLayout = drawNodePalette(state, ctx, drawScale);
-    drawScaleBar(state, ctx, paletteLayout.h + 10);
+    drawScaleBar(state, ctx, 0);
 
     ctx.lineWidth = 1.3 * drawScale;
     ctx.globalAlpha = 0.22;
@@ -147,13 +161,17 @@ export function createRenderer({
             const ringWidth = 2 * drawScale;
             const ringRadius = radius + 3 * drawScale;
             const startAngle = -Math.PI / 2;
-            const endAngle = startAngle + Math.PI * 2 * fraction;
+            const direction = typeof next.direction === "string" ? next.direction : "ccw";
+            const clockwise = direction === "cw";
+            const endAngle = clockwise
+              ? startAngle - Math.PI * 2 * fraction
+              : startAngle + Math.PI * 2 * fraction;
             ctx.save();
             ctx.strokeStyle = typeof next.color === "string" ? next.color : "#f4c95d";
             ctx.globalAlpha = 0.9;
             ctx.lineWidth = ringWidth;
             ctx.beginPath();
-            ctx.arc(node.x, node.y, ringRadius, startAngle, endAngle, false);
+            ctx.arc(node.x, node.y, ringRadius, startAngle, endAngle, clockwise);
             ctx.stroke();
             ctx.restore();
           }
@@ -189,19 +207,27 @@ export function createRenderer({
     if (state.hoverNodeId !== null) {
       const node = state.nodes[state.hoverNodeId];
       if (node) {
+        const heightM =
+          typeof node.heightM === "number"
+            ? node.heightM
+            : typeof state.defaultNodeHeightM === "number"
+              ? state.defaultNodeHeightM
+              : 2;
         const lines = [
           `Node ${node.nodeId}`,
           `Role: ${node.role ?? "CLIENT"}`,
-          node.elevation !== null
-            ? `Elevation: ${node.elevation.toFixed(1)} m`
-            : "Elevation: n/a",
+          `Height: ${heightM.toFixed(1)} m AGL`,
+          typeof node.elevation === "number"
+            ? `Ground elev: ${node.elevation.toFixed(1)} m`
+            : null,
         ];
+        const displayLines = lines.filter((line) => typeof line === "string");
         ctx.font = "12px 'Space Grotesk', sans-serif";
         const padding = 8;
         const lineHeight = 16;
-        const width = Math.max(...lines.map((line) => ctx.measureText(line).width));
+        const width = Math.max(...displayLines.map((line) => ctx.measureText(line).width));
         const boxWidth = width + padding * 2;
-        const boxHeight = lineHeight * lines.length + padding * 2;
+        const boxHeight = lineHeight * displayLines.length + padding * 2;
         let boxX = node.x + 12;
         let boxY = node.y - boxHeight - 12;
         if (boxX + boxWidth > state.width - 8) {
@@ -222,8 +248,12 @@ export function createRenderer({
         ctx.fill();
         ctx.stroke();
         ctx.fillStyle = "#f3f7ff";
-        for (let i = 0; i < lines.length; i += 1) {
-          ctx.fillText(lines[i], boxX + padding, boxY + padding + lineHeight * (i + 0.75));
+        for (let i = 0; i < displayLines.length; i += 1) {
+          ctx.fillText(
+            displayLines[i],
+            boxX + padding,
+            boxY + padding + lineHeight * (i + 0.75)
+          );
         }
       }
     }
@@ -231,8 +261,26 @@ export function createRenderer({
     ctx.fillStyle = "#9fb0c5";
     ctx.font = "12px 'Space Grotesk', sans-serif";
     const statusX = Math.min(state.width - 16, paletteLayout.x + paletteLayout.w + 12);
+    const activeMessageId =
+      state.messages.length > 0 && typeof state.messages[state.messages.length - 1]?.id === "number"
+        ? state.messages[state.messages.length - 1].id
+        : null;
+    const receivedFor =
+      typeof activeMessageId === "number"
+        ? activeMessageId
+        : typeof state.lastMessageId === "number"
+          ? state.lastMessageId
+          : null;
+    let receivedCount = 0;
+    if (typeof receivedFor === "number") {
+      for (const node of state.nodes) {
+        if (node?.received instanceof Set && node.received.has(receivedFor)) {
+          receivedCount += 1;
+        }
+      }
+    }
     ctx.fillText(
-      `Nodes: ${state.nodeCount} | Active floods: ${state.messages.length} | Last flood (#${state.lastMessageId}) transmissions: ${state.lastTransmissionCount}`,
+      `Nodes: ${state.nodeCount} | Active floods: ${state.messages.length} | Received: ${receivedCount} | Last flood (#${state.lastMessageId}) transmissions: ${state.lastTransmissionCount}`,
       statusX,
       state.height - 16
     );
@@ -240,4 +288,3 @@ export function createRenderer({
 
   return { draw };
 }
-

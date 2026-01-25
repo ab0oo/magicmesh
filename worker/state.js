@@ -40,6 +40,9 @@ export function createInitialState() {
     terrainLayer: null,
     coordinateMode: "random",
     metersPerPixel: 10,
+    earthRadiusM: 6371000,
+    defaultNodeHeightM: 2,
+    maxNodeHeightM: 2,
     slotTimeMsec: 60,
     cwMax: 5,
     cadTimeMsec: 4,
@@ -57,4 +60,3 @@ export function createInitialState() {
     loraLowDataRateOptimize: true,
   };
 }
-

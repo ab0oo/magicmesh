@@ -1,4 +1,23 @@
 export function createRadio({ clamp, randomRange, randomIntInclusive }) {
+  function hasLineOfSightCurvature(distanceMeters, heightAMeters, heightBMeters, earthRadiusM) {
+    const d = Number(distanceMeters);
+    if (!Number.isFinite(d) || d <= 0) {
+      return true;
+    }
+    const R = Number(earthRadiusM);
+    if (!Number.isFinite(R) || R <= 0) {
+      return true;
+    }
+    const h1 = Math.max(0, Number(heightAMeters) || 0);
+    const h2 = Math.max(0, Number(heightBMeters) || 0);
+    const horizon1 = Math.sqrt(2 * R * h1 + h1 * h1);
+    const horizon2 = Math.sqrt(2 * R * h2 + h2 * h2);
+    if (!Number.isFinite(horizon1) || !Number.isFinite(horizon2)) {
+      return true;
+    }
+    return d <= horizon1 + horizon2;
+  }
+
   function updateEffectiveRange(state) {
     if (!state.useLinkBudget) {
       state.effectiveRange = state.range;
@@ -124,6 +143,6 @@ export function createRadio({ clamp, randomRange, randomIntInclusive }) {
     estimateCwSizeFromSnr,
     estimateRxSnr,
     computeRebroadcastDelayMsec,
+    hasLineOfSightCurvature,
   };
 }
-

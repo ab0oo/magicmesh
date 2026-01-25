@@ -91,6 +91,7 @@ Promise.all([
         estimateCwSizeFromSnr: radio.estimateCwSizeFromSnr,
         estimateRxSnr: radio.estimateRxSnr,
         computeRebroadcastDelayMsec: radio.computeRebroadcastDelayMsec,
+        hasLineOfSightCurvature: radio.hasLineOfSightCurvature,
         sampleTerrainElevation: terrain.sampleTerrainElevation,
         applyTerrainToNode: terrain.applyTerrainToNode,
       });
@@ -286,6 +287,8 @@ Promise.all([
                 pinned: node.pinned,
                 role: node.role ?? "CLIENT",
                 elevation: node.elevation,
+                height_m:
+                  typeof node.heightM === "number" ? node.heightM : state.defaultNodeHeightM ?? 2,
               })),
             },
           });
@@ -339,6 +342,12 @@ Promise.all([
               typeof node.elevation === "number"
                 ? node.elevation
                 : terrain.sampleTerrainElevation(state, node.x, node.y),
+            heightM:
+              typeof node.height_m === "number"
+                ? node.height_m
+                : typeof node.heightM === "number"
+                  ? node.heightM
+                  : state.defaultNodeHeightM ?? 2,
           }));
           return;
         }
@@ -484,6 +493,12 @@ Promise.all([
               carrierSenseRange: state.carrierSenseRange,
               lastColor: defaultNodeColor,
               elevation: typeof node.elevation === "number" ? node.elevation : null,
+              heightM:
+                typeof node.height_m === "number"
+                  ? node.height_m
+                  : typeof node.heightM === "number"
+                    ? node.heightM
+                    : state.defaultNodeHeightM ?? 2,
             }));
             for (const node of state.nodes) {
               terrain.applyTerrainToNode(state, node);
@@ -509,6 +524,11 @@ Promise.all([
             } else {
               terrain.applyTerrainToNode(state, node);
             }
+            if (typeof next.height_m === "number") {
+              node.heightM = next.height_m;
+            } else if (typeof next.heightM === "number") {
+              node.heightM = next.heightM;
+            }
             if (next.role === "ROUTER" || next.role === "CLIENT" || next.role === "CLIENT_MUTE") {
               node.role = next.role;
             }
@@ -527,12 +547,43 @@ Promise.all([
           return;
         }
 
+        if (type === "editHeightAt") {
+          const node = sim.findNodeAt(state, payload.x, payload.y);
+          if (!node) {
+            return;
+          }
+          const heightM =
+            typeof node.heightM === "number"
+              ? node.heightM
+              : typeof state.defaultNodeHeightM === "number"
+                ? state.defaultNodeHeightM
+                : 2;
+          self.postMessage({
+            type: "editNodeHeight",
+            payload: { id: node.id, nodeId: node.nodeId, heightM },
+          });
+          return;
+        }
+
         if (type === "click") {
           if (paletteUi.paletteRoleAt(state, payload.x, payload.y)) {
             return;
           }
           const node = sim.findNodeAt(state, payload.x, payload.y);
           if (!node) {
+            return;
+          }
+          if (payload.altKey || payload.ctrlKey || payload.metaKey) {
+            const heightM =
+              typeof node.heightM === "number"
+                ? node.heightM
+                : typeof state.defaultNodeHeightM === "number"
+                  ? state.defaultNodeHeightM
+                  : 2;
+            self.postMessage({
+              type: "editNodeHeight",
+              payload: { id: node.id, nodeId: node.nodeId, heightM },
+            });
             return;
           }
           if (payload.shiftKey) {
@@ -542,6 +593,35 @@ Promise.all([
             return;
           }
           sim.injectMessage(state, node);
+          return;
+        }
+
+        if (type === "setNodeHeight") {
+          const id = payload && typeof payload.id === "number" ? payload.id : null;
+          if (id === null || id < 0 || id >= state.nodes.length) {
+            return;
+          }
+          const heightM = payload && typeof payload.heightM === "number" ? payload.heightM : null;
+          if (!Number.isFinite(heightM) || heightM < 0) {
+            return;
+          }
+          const node = state.nodes[id];
+          if (!node) {
+            return;
+          }
+          node.heightM = heightM;
+          if (state.dragNodeId === id) {
+            state.dragNodeId = null;
+          }
+          for (const transmission of state.activeTransmissions) {
+            if (!transmission || transmission.nodeId !== id) {
+              continue;
+            }
+            if (Number.isFinite(transmission.endTime) && transmission.endTime <= state.simTime) {
+              continue;
+            }
+            transmission.heightM = heightM;
+          }
           return;
         }
 
