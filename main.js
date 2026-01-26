@@ -1,6 +1,6 @@
 const footerEl = document.querySelector(".app__footer");
 
-const FALLBACK_VERSION = "0.1.21";
+const FALLBACK_VERSION = "0.2.0";
 const APP_VERSION =
   new URL(import.meta.url).searchParams.get("v") || window.APP_VERSION || FALLBACK_VERSION;
 

@@ -124,6 +124,8 @@ Promise.all([
           sim.updateNodes(state, delta);
         }
 
+        sim.updateUiRings(state, deltaReal);
+
         const neighbors = sim.computeNeighbors(state);
 
         if (!state.paused) {
@@ -147,7 +149,10 @@ Promise.all([
 
           state.nodeCount = payload.nodeCount;
           state.range = payload.range;
-          state.ttl = payload.ttl;
+          state.ttl =
+            typeof payload.ttl === "number" && Number.isFinite(payload.ttl)
+              ? Math.max(0, payload.ttl)
+              : state.ttl;
           state.timeScale = payload.timeScale ?? state.timeScale;
           state.carrierSenseRange = payload.range;
           state.useLinkBudget = Boolean(payload.useLinkBudget);
@@ -264,6 +269,7 @@ Promise.all([
               metersPerPixel: state.metersPerPixel,
               mapScale: state.mapScale,
               coordinateMode: state.coordinateMode,
+              maxTxPowerDbm: state.maxTxPowerDbm,
               lora: {
                 payloadBytes: state.loraPayloadBytes,
                 spreadingFactor: state.loraSpreadingFactor,
@@ -289,6 +295,8 @@ Promise.all([
                 elevation: node.elevation,
                 height_m:
                   typeof node.heightM === "number" ? node.heightM : state.defaultNodeHeightM ?? 2,
+                tx_power_dbm:
+                  typeof node.txPowerDbm === "number" ? node.txPowerDbm : state.txPower,
               })),
             },
           });
@@ -348,6 +356,19 @@ Promise.all([
                 : typeof node.heightM === "number"
                   ? node.heightM
                   : state.defaultNodeHeightM ?? 2,
+            txPowerDbm: (() => {
+              const maxDbm =
+                Number.isFinite(state.maxTxPowerDbm) && state.maxTxPowerDbm > 0
+                  ? state.maxTxPowerDbm
+                  : 40;
+              const raw =
+                typeof node.tx_power_dbm === "number"
+                  ? node.tx_power_dbm
+                  : typeof node.txPowerDbm === "number"
+                    ? node.txPowerDbm
+                    : state.txPower;
+              return Math.min(raw, maxDbm);
+            })(),
           }));
           return;
         }
@@ -380,7 +401,10 @@ Promise.all([
             }
           }
           if (payload.ttl !== undefined) {
-            state.ttl = payload.ttl;
+            state.ttl =
+              typeof payload.ttl === "number" && Number.isFinite(payload.ttl)
+                ? Math.max(0, payload.ttl)
+                : state.ttl;
           }
           if (payload.timeScale !== undefined) {
             state.timeScale = payload.timeScale;
@@ -403,7 +427,12 @@ Promise.all([
               typeof payload.pathLossExp === "number" ? payload.pathLossExp : state.pathLossExp;
           }
           if (payload.txPower !== undefined) {
-            state.txPower = typeof payload.txPower === "number" ? payload.txPower : state.txPower;
+            const maxDbm =
+              Number.isFinite(state.maxTxPowerDbm) && state.maxTxPowerDbm > 0
+                ? state.maxTxPowerDbm
+                : 40;
+            state.txPower =
+              typeof payload.txPower === "number" ? Math.min(payload.txPower, maxDbm) : state.txPower;
           }
           if (payload.txGain !== undefined) {
             state.txGain = typeof payload.txGain === "number" ? payload.txGain : state.txGain;
@@ -499,6 +528,19 @@ Promise.all([
                   : typeof node.heightM === "number"
                     ? node.heightM
                     : state.defaultNodeHeightM ?? 2,
+              txPowerDbm: (() => {
+                const maxDbm =
+                  Number.isFinite(state.maxTxPowerDbm) && state.maxTxPowerDbm > 0
+                    ? state.maxTxPowerDbm
+                    : 40;
+                const raw =
+                  typeof node.tx_power_dbm === "number"
+                    ? node.tx_power_dbm
+                    : typeof node.txPowerDbm === "number"
+                      ? node.txPowerDbm
+                      : state.txPower;
+                return Math.min(raw, maxDbm);
+              })(),
             }));
             for (const node of state.nodes) {
               terrain.applyTerrainToNode(state, node);
@@ -558,9 +600,39 @@ Promise.all([
               : typeof state.defaultNodeHeightM === "number"
                 ? state.defaultNodeHeightM
                 : 2;
+          const txPowerDbm =
+            typeof node.txPowerDbm === "number"
+              ? node.txPowerDbm
+              : typeof state.txPower === "number"
+                ? state.txPower
+                : 24;
           self.postMessage({
             type: "editNodeHeight",
-            payload: { id: node.id, nodeId: node.nodeId, heightM },
+            payload: { id: node.id, nodeId: node.nodeId, heightM, txPowerDbm },
+          });
+          return;
+        }
+
+        if (type === "previewNodeRadio") {
+          const id = payload && typeof payload.id === "number" ? payload.id : null;
+          if (id === null || id < 0 || id >= state.nodes.length) {
+            return;
+          }
+          const node = state.nodes[id];
+          if (!node) {
+            return;
+          }
+          const details = sim.getNodeRangeDetails(state, node, {
+            heightM: payload && typeof payload.heightM === "number" ? payload.heightM : undefined,
+            txPowerDbm:
+              payload && typeof payload.txPowerDbm === "number" ? payload.txPowerDbm : undefined,
+          });
+          if (!details) {
+            return;
+          }
+          self.postMessage({
+            type: "nodeRadioPreview",
+            payload: { id, ...details },
           });
           return;
         }
@@ -580,9 +652,15 @@ Promise.all([
                 : typeof state.defaultNodeHeightM === "number"
                   ? state.defaultNodeHeightM
                   : 2;
+            const txPowerDbm =
+              typeof node.txPowerDbm === "number"
+                ? node.txPowerDbm
+                : typeof state.txPower === "number"
+                  ? state.txPower
+                  : 24;
             self.postMessage({
               type: "editNodeHeight",
-              payload: { id: node.id, nodeId: node.nodeId, heightM },
+              payload: { id: node.id, nodeId: node.nodeId, heightM, txPowerDbm },
             });
             return;
           }
@@ -609,6 +687,10 @@ Promise.all([
           if (!node) {
             return;
           }
+          const before = sim.getNodeRangeDetails(state, node, {
+            heightM: typeof node.heightM === "number" ? node.heightM : undefined,
+            txPowerDbm: typeof node.txPowerDbm === "number" ? node.txPowerDbm : undefined,
+          });
           node.heightM = heightM;
           if (state.dragNodeId === id) {
             state.dragNodeId = null;
@@ -621,6 +703,54 @@ Promise.all([
               continue;
             }
             transmission.heightM = heightM;
+          }
+          const after = sim.getNodeRangeDetails(state, node, {
+            heightM,
+            txPowerDbm: typeof node.txPowerDbm === "number" ? node.txPowerDbm : undefined,
+          });
+          if (before && after) {
+            sim.addRangeRing(state, node, {
+              durationMs: 3000,
+              color: "#5ce1e6",
+              fromRadiusPx: before.rangePx,
+              toRadiusPx: after.rangePx,
+            });
+          }
+          return;
+        }
+
+        if (type === "setNodeTxPower") {
+          const id = payload && typeof payload.id === "number" ? payload.id : null;
+          if (id === null || id < 0 || id >= state.nodes.length) {
+            return;
+          }
+          const maxDbm =
+            Number.isFinite(state.maxTxPowerDbm) && state.maxTxPowerDbm > 0 ? state.maxTxPowerDbm : 40;
+          const txPowerDbm =
+            payload && typeof payload.txPowerDbm === "number" ? payload.txPowerDbm : null;
+          if (!Number.isFinite(txPowerDbm) || txPowerDbm < 0) {
+            return;
+          }
+          const node = state.nodes[id];
+          if (!node) {
+            return;
+          }
+          const before = sim.getNodeRangeDetails(state, node, {
+            heightM: typeof node.heightM === "number" ? node.heightM : undefined,
+            txPowerDbm: typeof node.txPowerDbm === "number" ? node.txPowerDbm : undefined,
+          });
+          node.txPowerDbm = Math.min(txPowerDbm, maxDbm);
+          const after = sim.getNodeRangeDetails(state, node, {
+            heightM: typeof node.heightM === "number" ? node.heightM : undefined,
+            txPowerDbm: node.txPowerDbm,
+          });
+          if (before && after) {
+            sim.addRangeRing(state, node, {
+              durationMs: 3000,
+              color: "#5ce1e6",
+              fromRadiusPx: before.rangePx,
+              toRadiusPx: after.rangePx,
+            });
           }
           return;
         }
@@ -671,6 +801,15 @@ Promise.all([
               const nodeCount = sim.addNodeAt(state, state.dragPointer.x, state.dragPointer.y, role);
               self.postMessage({ type: "nodeCount", payload: { nodeCount } });
             }
+            return;
+          }
+          if (
+            state.dragNodeId !== null &&
+            typeof paletteUi.paletteDeleteAt === "function" &&
+            paletteUi.paletteDeleteAt(state, state.dragPointer.x, state.dragPointer.y)
+          ) {
+            const nodeCount = sim.deleteNodeById(state, state.dragNodeId);
+            self.postMessage({ type: "nodeCount", payload: { nodeCount } });
             return;
           }
           state.dragNodeId = null;

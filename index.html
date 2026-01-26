@@ -20,74 +20,247 @@
           <p>Canvas-based mesh network visualization with flood routing.</p>
         </header>
         <div class="controls">
-          <button id="resetColors">Reset Node Colors</button>
-          <button id="download">Download</button>
-          <button id="load">Load</button>
-          <button id="saveState">Save</button>
-          <input id="loadFile" type="file" accept="application/json" />
-          <label>
-            Node Count
-            <input id="nodeCount" type="range" min="10" max="200" value="80" />
-          </label>
-          <label>
-            Range
-            <input id="range" type="range" min="40" max="200" value="110" />
-          </label>
-          <label>
-            Modulation Preset
-            <select id="modPreset">
-              <option value="manual">Manual Range</option>
-              <option value="short_turbo">Short Turbo (SF7/BW500)</option>
-              <option value="short_fast">Short Fast (SF7/BW250)</option>
-              <option value="short_slow">Short Slow (SF8/BW250)</option>
-              <option value="medium_fast">Medium Fast (SF9/BW250)</option>
-              <option value="medium_slow">Medium Slow (SF10/BW250)</option>
-              <option value="long_turbo">Long Turbo (SF11/BW500)</option>
-              <option value="long_fast">Long Fast (SF11/BW250)</option>
-              <option value="long_moderate">Long Moderate (SF11/BW125)</option>
-              <option value="long_slow">Long Slow (SF12/BW125)</option>
-            </select>
-          </label>
-          <label>
-            Packet Size (bytes)
-            <input id="packetSize" type="number" min="20" max="250" step="1" value="50" />
-          </label>
-          <div class="controls__fixed" aria-label="Fixed RF characteristics">
-            <div class="controls__fixedTitle">RF (fixed)</div>
-            <div class="controls__fixedGrid">
-              <div class="controls__kv"><span class="controls__k">Radio</span><span class="controls__v">SX1262</span></div>
-              <div class="controls__kv"><span class="controls__k">Freq</span><span class="controls__v">915 MHz</span></div>
-              <div class="controls__kv"><span class="controls__k">TX</span><span class="controls__v">24 dBm</span></div>
-              <div class="controls__kv"><span class="controls__k">TX gain</span><span class="controls__v">3 dBi</span></div>
-              <div class="controls__kv"><span class="controls__k">RX gain</span><span class="controls__v">3 dBi</span></div>
-              <div class="controls__kv"><span class="controls__k">Noise floor</span><span class="controls__v">-120 dBm</span></div>
-              <div class="controls__kv"><span class="controls__k">Path loss</span><span class="controls__v">n = 2.0</span></div>
-              <div class="controls__kv"><span class="controls__k">On-air</span><span class="controls__v" id="toaValue">—</span></div>
+          <div class="controls__actions" role="group" aria-label="File and actions">
+            <div class="controls__actionCol" aria-label="Actions">
+              <button id="resetColors" class="button button--secondary" type="button">
+                Reset
+              </button>
+              <button id="helpButton" class="button button--secondary" type="button">
+                Help
+              </button>
+            </div>
+            <div class="controls__actionCol" aria-label="File">
+              <button id="saveState" class="button" type="button">Save</button>
+              <button id="load" class="button button--secondary" type="button">Load</button>
             </div>
           </div>
-          <label>
-            Time Scale
-            <input id="timeScale" type="range" min="0.1" max="1" step="0.05" value="1" />
-          </label>
-          <label>
-            Max Hops
-            <input id="ttl" type="number" min="1" max="12" value="4" />
-          </label>
+          <input id="loadFile" type="file" accept="application/json" />
+          <details class="controls__section" open>
+            <summary class="controls__sectionTitle">Simulation</summary>
+            <div class="controls__sectionBody">
+              <label>
+                Node Count
+                <input id="nodeCount" type="range" min="10" max="200" value="80" />
+              </label>
+              <label>
+                Range
+                <input id="range" type="range" min="40" max="200" value="110" />
+              </label>
+              <label>
+                Time Scale
+                <input id="timeScale" type="range" min="0.1" max="1" step="0.05" value="1" />
+              </label>
+              <label>
+                Max Hops
+                <input id="ttl" type="number" min="0" max="12" value="4" />
+              </label>
+            </div>
+          </details>
+
+          <details class="controls__section" open>
+            <summary class="controls__sectionTitle">Radio</summary>
+            <div class="controls__sectionBody">
+              <label>
+                Modulation Preset
+                <select id="modPreset">
+                  <option value="manual">Manual Range</option>
+                  <option value="short_turbo">Short Turbo (SF7/BW500)</option>
+                  <option value="short_fast">Short Fast (SF7/BW250)</option>
+                  <option value="short_slow">Short Slow (SF8/BW250)</option>
+                  <option value="medium_fast">Medium Fast (SF9/BW250)</option>
+                  <option value="medium_slow">Medium Slow (SF10/BW250)</option>
+                  <option value="long_turbo">Long Turbo (SF11/BW500)</option>
+                  <option value="long_fast" selected>Long Fast (SF11/BW250)</option>
+                  <option value="long_moderate">Long Moderate (SF11/BW125)</option>
+                  <option value="long_slow">Long Slow (SF12/BW125)</option>
+                </select>
+              </label>
+              <label>
+                Packet Size (bytes)
+                <input id="packetSize" type="number" min="20" max="250" step="1" value="90" />
+              </label>
+              <div class="controls__fixed" aria-label="Fixed RF characteristics">
+                <div class="controls__fixedTitle">RF (fixed)</div>
+                <div class="controls__fixedGrid">
+                  <div class="controls__kv">
+                    <span class="controls__k">Radio</span><span class="controls__v">SX1262</span>
+                  </div>
+                  <div class="controls__kv">
+                    <span class="controls__k">Freq</span><span class="controls__v">915 MHz</span>
+                  </div>
+                  <div class="controls__kv">
+                    <span class="controls__k">TX</span><span class="controls__v">24 dBm</span>
+                  </div>
+                  <div class="controls__kv">
+                    <span class="controls__k">TX gain</span><span class="controls__v">3 dBi</span>
+                  </div>
+                  <div class="controls__kv">
+                    <span class="controls__k">RX gain</span><span class="controls__v">3 dBi</span>
+                  </div>
+                  <div class="controls__kv">
+                    <span class="controls__k">Noise floor</span><span class="controls__v">-120 dBm</span>
+                  </div>
+                  <div class="controls__kv">
+                    <span class="controls__k">Path loss</span><span class="controls__v">n = 2.0</span>
+                  </div>
+                  <div class="controls__kv">
+                    <span class="controls__k">On-air</span><span class="controls__v" id="toaValue">—</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+          <div class="controls__help" role="note">
+            <div class="controls__helpTitle">Canvas shortcuts</div>
+            <div class="controls__helpText">
+              Click node: inject flood. Shift-click: pin/unpin. Right-click or Alt/Ctrl/Cmd+Click:
+              set height (AGL). Press D: toggle debug.
+            </div>
+          </div>
         </div>
       </aside>
       <section class="app__canvas">
         <div class="app__stage">
           <div id="map" class="map"></div>
           <canvas id="sim" width="1200" height="720"></canvas>
+          <section
+            id="nodeInspector"
+            class="inspector"
+            aria-label="Node inspector"
+            aria-live="polite"
+            hidden
+          >
+            <header class="inspector__header">
+              <div class="inspector__title" id="inspectorTitle">Node</div>
+              <button
+                id="inspectorClose"
+                class="button button--secondary inspector__close"
+                type="button"
+              >
+                Close
+              </button>
+            </header>
+            <div class="inspector__body">
+              <label>
+                Height (m AGL)
+                <input
+                  id="inspectorHeight"
+                  type="number"
+                  inputmode="decimal"
+                  min="0"
+                  step="1"
+                  placeholder="2"
+                />
+              </label>
+              <label>
+                TX Power (dBm)
+                <input
+                  id="inspectorTxPower"
+                  type="number"
+                  inputmode="decimal"
+                  min="0"
+                  max="40"
+                  step="1"
+                  placeholder="24"
+                />
+              </label>
+              <div class="inspector__readout">
+                <div class="inspector__readoutRow">
+                  <span class="inspector__k">Effective range</span>
+                  <span class="inspector__v" id="inspectorRange">—</span>
+                </div>
+                <div class="inspector__readoutRow inspector__readoutRow--muted">
+                  <span class="inspector__k">LOS limit</span>
+                  <span class="inspector__v" id="inspectorLosLimit">—</span>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
         <div class="app__canvasControls">
           <button id="mapToggle" hidden>Map Pan/Zoom</button>
         </div>
       </section>
       <footer class="app__footer">
-        Click a node to inject a flood message. Shift-click to pin/unpin a node.
+        Click a node to inject a flood message. Shift-click to pin/unpin. Right-click (or
+        Alt/Ctrl/Cmd+Click) to set node height (AGL).
       </footer>
     </main>
+
+    <dialog id="nodeHeightDialog" class="dialog" aria-labelledby="nodeHeightTitle">
+      <form method="dialog" class="dialog__form">
+        <div class="dialog__header">
+          <h2 id="nodeHeightTitle" class="dialog__title">Set node height</h2>
+          <p class="dialog__subtitle">Height above ground level (AGL), in meters.</p>
+        </div>
+        <label class="dialog__field">
+          Height (m)
+          <input
+            id="nodeHeightInput"
+            type="number"
+            inputmode="decimal"
+            min="0"
+            step="0.1"
+            placeholder="2.0"
+            required
+          />
+        </label>
+        <menu class="dialog__actions">
+          <button value="cancel" class="button button--secondary" type="submit">Cancel</button>
+          <button value="save" class="button" type="submit">Save</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="helpDialog" class="dialog dialog--help" aria-labelledby="helpTitle">
+      <form method="dialog" class="dialog__form dialog__form--help">
+        <div class="dialog__header">
+          <h2 id="helpTitle" class="dialog__title">Help</h2>
+          <p class="dialog__subtitle">
+            A Meshtastic-inspired flood routing + LoRa timing simulator (visual + educational, not a
+            full protocol implementation).
+          </p>
+        </div>
+        <div class="dialog__content">
+          <h3 class="dialog__h">What you’re seeing</h3>
+          <ul class="dialog__list">
+            <li><strong>Nodes</strong> are radios. Links show likely neighbors based on range + LOS.</li>
+            <li><strong>Floods</strong> are broadcast messages; nodes rebroadcast with duplicate suppression.</li>
+            <li><strong>Pulses</strong> visualize on-air transmissions expanding to the node’s radio range.</li>
+          </ul>
+
+          <h3 class="dialog__h">What’s simulated (Meshtastic-inspired)</h3>
+          <ul class="dialog__list">
+            <li><strong>TTL / max hops</strong>: nodes can receive at max hop but won’t relay past TTL.</li>
+            <li><strong>LoRa on-air time</strong>: computed from Semtech ToA math using the selected preset + packet size.</li>
+            <li><strong>LBT/CAD-style behavior</strong>: nodes defer if the channel is busy and retry with backoff.</li>
+            <li><strong>Node roles</strong>: Router (star), Client (circle), Mute (triangle; receives but never retransmits).</li>
+            <li><strong>Curvature LOS</strong>: spherical-earth “radio horizon” using node height AGL.</li>
+            <li><strong>Transmit power</strong>: each node has a TX power (dBm) that affects its effective range (capped at 40 dBm).</li>
+            <li><strong>Path loss (n)</strong>: controls how quickly signal falls off with distance; larger <code>n</code> reduces effective range.</li>
+          </ul>
+
+          <h3 class="dialog__h">What it’s not</h3>
+          <ul class="dialog__list">
+            <li>No real packet formats, encryption, or channel plans.</li>
+            <li>RF propagation is simplified (range + curvature LOS gating; no diffraction/refraction).</li>
+          </ul>
+
+          <h3 class="dialog__h">Controls</h3>
+          <ul class="dialog__list">
+            <li><strong>Click node</strong>: inject a flood.</li>
+            <li><strong>Shift-click</strong>: pin/unpin a node.</li>
+            <li><strong>Drag node</strong>: reposition.</li>
+            <li><strong>Right-click</strong> (or <strong>Alt/Ctrl/Cmd+Click</strong>): set node height (AGL).</li>
+            <li><strong>Drag from palette</strong> (lower-left on canvas): add a node.</li>
+          </ul>
+        </div>
+        <menu class="dialog__actions">
+          <button value="cancel" class="button button--secondary" type="submit">Close</button>
+        </menu>
+      </form>
+    </dialog>
+
     <div class="app__version" aria-hidden="true" id="appVersion"></div>
     <script
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -95,7 +268,7 @@
       crossorigin=""
     ></script>
     <script>
-      window.APP_VERSION = "0.1.21";
+      window.APP_VERSION = "0.2.0";
       const versionEl = document.getElementById("appVersion");
       if (versionEl) {
         versionEl.textContent = `v${window.APP_VERSION}`;

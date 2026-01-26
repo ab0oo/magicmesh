@@ -25,10 +25,12 @@ export function initStateIO({
     pendingExportName = "mesh-map.json";
   };
 
-  downloadButton.addEventListener("click", () => {
-    pendingExportName = "mesh-map.json";
-    workerPost("export");
-  });
+  if (downloadButton) {
+    downloadButton.addEventListener("click", () => {
+      pendingExportName = "mesh-map.json";
+      workerPost("export");
+    });
+  }
 
   loadButton.addEventListener("click", () => {
     loadFileInput.click();
@@ -76,4 +78,3 @@ export function initStateIO({
 
   return { handleExport };
 }
-

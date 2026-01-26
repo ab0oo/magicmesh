@@ -13,9 +13,11 @@ A browser-based canvas simulation of flood routing in a mesh network (Meshtastic
 - **Persistent node coloring**: nodes keep the color of the last packet they received/transmitted.
 - **Reset node colors** button to restore all nodes to white.
 - **Export/Import** simulation state to/from a JSON file (browser download + file upload).
+- **Per-node transmit power**: nodes track TX power (dBm) and it affects their effective range (capped at 40 dBm).
 - **Node types**:
   - `ROUTER` (star), `CLIENT` (circle), `CLIENT_MUTE` (triangle; receives but never retransmits).
 - **Simplified curvature LOS** (perfect sphere) using each node’s height above local ground.
+- **Path loss exponent (`n`)**: controls how quickly signal strength falls with distance; larger `n` reduces effective range.
 
 ## Quick start (frontend only)
 Because the app uses ES modules + a Web Worker, it must be served over HTTP.
@@ -59,6 +61,7 @@ Then open whatever port your `docker-compose.yml` exposes (commonly `http://loca
 - Duplicate suppression prevents retransmitting the same flood ID twice (but nodes can still “hear” the final hop).
 - Pulses render on transmit and expand to full range over the on-air time.
 - Curvature LOS is applied using node height AGL (defaults to `2m`) and a spherical Earth.
+- Transmit power is per-node and affects range: higher dBm increases effective range (with the configured path-loss exponent), but is capped at `40 dBm`.
 
 ## Algorithm overview
 1. Build a quadtree over all node positions to support fast radius queries.

@@ -7,6 +7,22 @@ export function createRenderer({
   pathNodeGlyph,
   drawNodePalette,
 }) {
+  function formatDurationMs(ms) {
+    if (!Number.isFinite(ms) || ms < 0) {
+      return "—";
+    }
+    if (ms >= 10000) {
+      return `${(ms / 1000).toFixed(1)} s`;
+    }
+    if (ms >= 1000) {
+      return `${(ms / 1000).toFixed(2)} s`;
+    }
+    if (ms >= 100) {
+      return `${ms.toFixed(0)} ms`;
+    }
+    return `${ms.toFixed(1)} ms`;
+  }
+
   function drawScaleBar(state, ctx, bottomOffset = 0) {
     if (state.coordinateMode !== "random") {
       return;
@@ -128,6 +144,41 @@ export function createRenderer({
       }
     }
     ctx.globalAlpha = 1;
+
+    for (const node of state.nodes) {
+      if (!(node?.uiRings instanceof Array) || node.uiRings.length === 0) {
+        continue;
+      }
+      for (const ring of node.uiRings) {
+        const durationMs = Number(ring?.durationMs);
+        const ageMs = Number(ring?.ageMs);
+        const fromRadiusPx = Number(ring?.fromRadiusPx);
+        const toRadiusPx = Number(ring?.toRadiusPx);
+        if (!Number.isFinite(durationMs) || durationMs <= 0) {
+          continue;
+        }
+        if (!Number.isFinite(ageMs) || ageMs < 0) {
+          continue;
+        }
+        if (!Number.isFinite(fromRadiusPx) || fromRadiusPx <= 0) {
+          continue;
+        }
+        if (!Number.isFinite(toRadiusPx) || toRadiusPx <= 0) {
+          continue;
+        }
+        const progress = clamp(ageMs / durationMs, 0, 1);
+        const eased = 1 - (1 - progress) * (1 - progress) * (1 - progress);
+        const radiusPx = fromRadiusPx + (toRadiusPx - fromRadiusPx) * eased;
+        ctx.save();
+        ctx.strokeStyle = typeof ring.color === "string" ? ring.color : "#5ce1e6";
+        ctx.globalAlpha = 0.9 * (1 - progress);
+        ctx.lineWidth = 2.5 * drawScale;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, radiusPx, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
 
     for (const node of state.nodes) {
       ctx.fillStyle = node.lastColor ?? defaultNodeColor;
@@ -280,7 +331,7 @@ export function createRenderer({
       }
     }
     ctx.fillText(
-      `Nodes: ${state.nodeCount} | Active floods: ${state.messages.length} | Received: ${receivedCount} | Last flood (#${state.lastMessageId}) transmissions: ${state.lastTransmissionCount}`,
+      `Nodes: ${state.nodeCount} | Active floods: ${state.messages.length} | Received: ${receivedCount} | Last flood (#${state.lastMessageId}) transmissions: ${state.lastTransmissionCount} | Elapsed: ${formatDurationMs(state.lastFloodElapsedMs)}`,
       statusX,
       state.height - 16
     );
