@@ -54,6 +54,17 @@
                 Max Hops
                 <input id="ttl" type="number" min="0" max="12" value="4" />
               </label>
+              <label>
+                Terrain Type
+                <select id="terrainType">
+                  <option value="flat-earth" selected>Flat Earth</option>
+                  <option value="coastal">Coastal</option>
+                  <option value="rolling_hills">Rolling Hills</option>
+                  <option value="alpine">Alpine</option>
+                  <option value="desert">Desert</option>
+                </select>
+                <button id="regenTerrain" class="button button--secondary" type="button" style="margin-top: 4px; width: 100%;">Regenerate</button>
+              </label>
             </div>
           </details>
 
@@ -164,6 +175,9 @@
                   placeholder="24"
                 />
               </label>
+              <button id="moveToPeak" class="button button--secondary" type="button" style="margin-top: 8px; width: 100%;">
+                Move to Closest Peak
+              </button>
               <div class="inspector__readout">
                 <div class="inspector__readoutRow">
                   <span class="inspector__k">Effective range</span>

@@ -73,6 +73,7 @@ export function createSim({
       Number.isFinite(overrides.heightM) && overrides.heightM >= 0
         ? overrides.heightM
         : getNodeHeightMeters(state, node);
+    const absoluteHeightM = (node.elevation || 0) + heightM;
     const txPowerDbm = Number.isFinite(overrides.txPowerDbm)
       ? overrides.txPowerDbm
       : getNodeTxPowerDbm(state, node);
@@ -111,7 +112,7 @@ export function createSim({
         : 2;
     const earthRadiusM = getEarthRadiusMeters(state);
     const losLimitMeters =
-      computeHorizonMeters(earthRadiusM, heightM) + computeHorizonMeters(earthRadiusM, otherHeightM);
+      computeHorizonMeters(earthRadiusM, absoluteHeightM) + computeHorizonMeters(earthRadiusM, otherHeightM);
     const losLimitPx = metersPerScreenPx ? losLimitMeters / metersPerScreenPx : null;
 
     const rangePx =
@@ -186,7 +187,7 @@ export function createSim({
       return rfPx;
     }
     const earthRadiusM = getEarthRadiusMeters(state);
-    const ownHeightM = getNodeHeightMeters(state, node);
+    const ownHeightM = (node.elevation || 0) + getNodeHeightMeters(state, node);
     const peerHeightM =
       Number.isFinite(state.defaultNodeHeightM) && state.defaultNodeHeightM >= 0
         ? state.defaultNodeHeightM
@@ -252,18 +253,61 @@ export function createSim({
     return distPx / mapScale;
   }
 
-  function hasCurvatureLos(state, a, b, dxPx, dyPx) {
+  function checkLineOfSight(state, a, b) {
     if (typeof hasLineOfSightCurvature !== "function") {
       return true;
     }
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const distanceM = getDistanceMeters(state, dx, dy);
     const earthRadiusM =
       Number.isFinite(state.earthRadiusM) && state.earthRadiusM > 0 ? state.earthRadiusM : 6371000;
+
+    // Absolute heights (Elevation + AGL) for curvature check
     const ha =
-      Number.isFinite(a?.heightM) && a.heightM >= 0 ? a.heightM : state.defaultNodeHeightM ?? 2;
+      (Number.isFinite(a?.elevation) ? Number(a.elevation) : 0) +
+      (Number.isFinite(a?.heightM) && a.heightM >= 0 ? a.heightM : state.defaultNodeHeightM ?? 2);
     const hb =
-      Number.isFinite(b?.heightM) && b.heightM >= 0 ? b.heightM : state.defaultNodeHeightM ?? 2;
-    const distanceM = getDistanceMeters(state, dxPx, dyPx);
-    return hasLineOfSightCurvature(distanceM, ha, hb, earthRadiusM);
+      (Number.isFinite(b?.elevation) ? Number(b.elevation) : 0) +
+      (Number.isFinite(b?.heightM) && b.heightM >= 0 ? b.heightM : state.defaultNodeHeightM ?? 2);
+
+    // 1. Fast Horizon Check
+    if (!hasLineOfSightCurvature(distanceM, ha, hb, earthRadiusM)) {
+      return false;
+    }
+
+    // 2. Terrain Ray-casting & Fresnel Zone
+    if (!state.terrain) return true;
+
+    const distPx = Math.hypot(dx, dy);
+    if (distPx < 2) return true;
+
+    const numSamples = Math.min(100, Math.max(10, Math.floor(distPx / 4)));
+
+    for (let i = 1; i < numSamples; i++) {
+      const t = i / numSamples;
+      const sx = a.x + dx * t;
+      const sy = a.y + dy * t;
+      const groundH = sampleTerrainElevation(state, sx, sy);
+      if (groundH === null) continue;
+
+      const beamH = ha + (hb - ha) * t;
+      const d1m = t * distanceM;
+      const d2m = distanceM - d1m;
+
+      // Earth curvature bulge at this distance relative to the chord
+      const hDrop = (d1m * d2m) / (2 * earthRadiusM);
+
+      // Hard blockage only if the terrain (plus Earth bulge) physically intersects the beam.
+      if (groundH + hDrop > beamH) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function hasCurvatureLos(state, a, b, dxPx, dyPx) {
+    return checkLineOfSight(state, a, b);
   }
 
   function getNodeRange(state, node) {
@@ -297,8 +341,23 @@ export function createSim({
 
   function createNodes(state) {
     const padding = 40;
-    const nodes = [];
-    for (let id = 0; id < state.nodeCount; id += 1) {
+    const pinnedNodes = (state.nodes || []).filter((n) => n.pinned);
+    const nodes = pinnedNodes.slice(0, state.nodeCount);
+
+    // Reset simulation state for preserved pinned nodes
+    for (let i = 0; i < nodes.length; i++) {
+      nodes[i].id = i;
+      nodes[i].nodeId = i;
+      nodes[i].pendingTransmits = new Map();
+      nodes[i].received = new Set();
+      nodes[i].pulses = [];
+      nodes[i].uiRings = [];
+      nodes[i].collisionUntil = 0;
+      nodes[i].lastColor = defaultNodeColor;
+    }
+
+    while (nodes.length < state.nodeCount) {
+      const id = nodes.length;
       const x = randomRange(padding, state.width - padding);
       const y = randomRange(padding, state.height - padding);
       const roleRoll = Math.random();
@@ -363,7 +422,7 @@ export function createSim({
         const dy = node.y - candidate.y;
         if (dx * dx + dy * dy <= nodeRange * nodeRange) {
           const other = state.nodes[candidate.id];
-          if (other && !hasCurvatureLos(state, node, other, dx, dy)) {
+          if (other && !checkLineOfSight(state, node, other)) {
             continue;
           }
           nearby.push(candidate.id);
@@ -433,19 +492,7 @@ export function createSim({
       const dx = node.x - transmission.x;
       const dy = node.y - transmission.y;
       if (dx * dx + dy * dy <= senseRangeSq) {
-        const earthRadiusM =
-          Number.isFinite(state.earthRadiusM) && state.earthRadiusM > 0 ? state.earthRadiusM : 6371000;
-        const rxHeight =
-          Number.isFinite(node?.heightM) && node.heightM >= 0 ? node.heightM : state.defaultNodeHeightM ?? 2;
-        const txHeight =
-          Number.isFinite(transmission?.heightM) && transmission.heightM >= 0
-            ? transmission.heightM
-            : state.defaultNodeHeightM ?? 2;
-        const distanceM = getDistanceMeters(state, dx, dy);
-        if (
-          typeof hasLineOfSightCurvature === "function" &&
-          !hasLineOfSightCurvature(distanceM, rxHeight, txHeight, earthRadiusM)
-        ) {
+        if (!checkLineOfSight(state, node, transmission)) {
           continue;
         }
         if (earliestEnd === null || transmission.endTime < earliestEnd) {
@@ -516,22 +563,34 @@ export function createSim({
                 continue;
               }
               if (receiver.received.has(message.id)) {
-                if (
-                  receiver.role === "CLIENT" &&
-                  receiver.pendingTransmits instanceof Map &&
-                  receiver.pendingTransmits.has(message.id)
-                ) {
-                  receiver.pendingTransmits.delete(message.id);
-                  message.transmitQueue = message.transmitQueue.filter(
-                    (event) => event.nodeId !== receiver.id
-                  );
+                // Duplicate Suppression / Implicit ACK Logic (Overhear neighbor relaying)
+                const pending = receiver.pendingTransmits;
+                if (pending instanceof Map && pending.has(message.id)) {
+                  const txEvent = message.transmitQueue.find((e) => e.nodeId === receiver.id);
+
+                  if (receiver.role === "CLIENT") {
+                    // CLIENTs cancel pending rebroadcasts immediately to save airtime
+                    pending.delete(message.id);
+                    message.transmitQueue = message.transmitQueue.filter((e) => e.nodeId !== receiver.id);
+                  } else if (receiver.role === "ROUTER_LATE" && txEvent) {
+                    // ROUTER_LATE shifts to a late window instead of canceling, but only if not already shifted
+                    const uiEntry = pending.get(message.id);
+                    if (uiEntry && uiEntry.direction !== "cw") {
+                      const cwMax = Number.isFinite(state.cwMax) ? state.cwMax : 5;
+                      const slot = Number.isFinite(state.slotTimeMsec) ? state.slotTimeMsec : 60;
+                      const lateOffset = 2 * cwMax * slot;
+                      const newReadyAt = now + lateOffset + Math.random() * slot;
+
+                      txEvent.readyAt = newReadyAt;
+                      uiEntry.readyAt = newReadyAt;
+                      uiEntry.direction = "cw";
+                    }
+                  }
                 }
                 continue;
               }
               receiveMessage(receiver, message);
-              if (receiveEvent.hop > state.ttl) {
-                receiver.lastColor = message.color;
-              }
+
               const snrDb = Number.isFinite(receiveEvent.snr)
                 ? receiveEvent.snr
                 : estimateRxSnr(state, sender, receiver, (n) => getNodeRange(state, n));
@@ -539,7 +598,11 @@ export function createSim({
               const delay = computeRebroadcastDelayMsec(state, receiver.role, cwSize);
               const cadTime = Number.isFinite(state.cadTimeMsec) ? state.cadTimeMsec : 0;
               const readyAt = now + delay + cadTime;
-              if (receiver.role !== "CLIENT_MUTE" && receiveEvent.hop <= state.ttl) {
+
+              // TTL check: A node only rebroadcasts if it received the packet at a hop count
+              // strictly less than the maximum hops (TTL). 
+              // e.g. if TTL=3, hop 1 and 2 relay. Hop 3 is the final destination.
+              if (receiver.role !== "CLIENT_MUTE" && receiveEvent.hop < state.ttl) {
                 message.transmitQueue.push({
                   nodeId: receiver.id,
                   readyAt,
@@ -586,6 +649,9 @@ export function createSim({
         if (!sender) {
           continue;
         }
+        // Re-verify TTL at time of transmission
+        if (transmitEvent.hop > 0 && transmitEvent.hop >= state.ttl) continue;
+
         const busyUntil = getBusyUntil(state, sender, now);
         if (busyUntil !== null) {
           const cwSize = Number.isFinite(transmitEvent.cwSize) ? transmitEvent.cwSize : state.cwMax;
@@ -637,12 +703,11 @@ export function createSim({
           message.firstTxAt = now;
         }
         message.lastTxEndAt = now + state.onAirTime;
+        message.transmissions += 1; // Increment total packets sent for this flood
         emitPulse(state, sender, message);
         for (const neighborId of neighbors[transmitEvent.nodeId]) {
           const neighbor = state.nodes[neighborId];
-          if (!neighbor || neighbor.received.has(message.id)) {
-            continue;
-          }
+          if (!neighbor) continue;
           const snrDb = estimateRxSnr(state, sender, neighbor, (n) => getNodeRange(state, n));
           message.pendingReceives.push({
             nodeId: neighborId,
@@ -651,13 +716,13 @@ export function createSim({
             hop: transmitEvent.hop + 1,
             snr: snrDb,
           });
-          message.transmissions += 1;
         }
         state.activeTransmissions.push({
           nodeId: sender.id,
           x: sender.x,
           y: sender.y,
           endTime: now + state.onAirTime,
+          elevation: sender.elevation || 0,
           heightM:
             Number.isFinite(sender?.heightM) && sender.heightM >= 0
               ? sender.heightM
@@ -735,6 +800,55 @@ export function createSim({
       }
     }
     return closest;
+  }
+
+  function moveNodeToClosestPeak(state, nodeId) {
+    const node = state.nodes[nodeId];
+    if (!node || !state.terrain) return;
+
+    let cx = node.x;
+    let cy = node.y;
+    let currentH = sampleTerrainElevation(state, cx, cy) || -10000;
+
+    const stepPx = 4;
+    let improved = true;
+    let iterations = 0;
+
+    while (improved && iterations < 200) {
+      improved = false;
+      iterations++;
+      let bestH = currentH;
+      let bx = cx;
+      let by = cy;
+
+      for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
+        const nx = cx + Math.cos(angle) * stepPx;
+        const ny = cy + Math.sin(angle) * stepPx;
+
+        if (nx < 0 || nx >= state.width || ny < 0 || ny >= state.height) continue;
+
+        const h = sampleTerrainElevation(state, nx, ny);
+        if (h !== null && h > bestH + 0.05) {
+          bestH = h;
+          bx = nx;
+          by = ny;
+          improved = true;
+        }
+      }
+
+      if (improved) {
+        cx = bx;
+        cy = by;
+        currentH = bestH;
+      }
+    }
+
+    node.x = cx;
+    node.y = cy;
+    node.elevation = currentH;
+    node.pinned = true;
+    node.vx = 0;
+    node.vy = 0;
   }
 
   function addNodeAt(state, x, y, role) {
@@ -820,6 +934,7 @@ export function createSim({
     updateUiRings,
     findNodeAt,
     injectMessage,
+    moveNodeToClosestPeak,
     addNodeAt,
     deleteNodeById,
     addRangeRing,

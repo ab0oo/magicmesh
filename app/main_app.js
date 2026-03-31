@@ -16,6 +16,9 @@ const modPresetSelect = document.getElementById("modPreset");
 const packetSizeInput = document.getElementById("packetSize");
 const mapToggleButton = document.getElementById("mapToggle");
 const canvasElement = document.getElementById("sim");
+const terrainTypeSelect = document.getElementById("terrainType");
+const regenTerrainButton = document.getElementById("regenTerrain");
+const moveToPeakButton = document.getElementById("moveToPeak");
 
 if (!canvas.transferControlToOffscreen) {
   console.error("OffscreenCanvas not supported in this browser.");
@@ -222,6 +225,8 @@ Promise.all([
     modPresetSelect,
     packetSizeInput,
     resetMapToggleState: liveMap.resetMapToggleState,
+    terrainTypeSelect,
+    regenTerrainButton,
     sendParams,
     workerPost: workerBridge.post,
     modulationPresets: rfControls.modulationPresets,
@@ -260,6 +265,9 @@ Promise.all([
   });
 
   workerBridge.post("setParams", { mapScale: 1 });
+  if (terrainTypeSelect) {
+    workerBridge.post("generateProceduralTerrain", { terrainType: terrainTypeSelect.value });
+  }
   liveMap.setMapToggleVisible(false);
   workerBridge.startClock();
 
@@ -347,6 +355,14 @@ Promise.all([
     inspectorClose.addEventListener("click", () => {
       inspectedNode = null;
       setInspectorVisible(false);
+    });
+  }
+
+  if (moveToPeakButton) {
+    moveToPeakButton.addEventListener("click", () => {
+      if (inspectedNode) {
+        workerBridge.post("moveNodeToClosestPeak", { id: inspectedNode.id });
+      }
     });
   }
 

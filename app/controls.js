@@ -186,6 +186,8 @@ export function bindControls({
   modPresetSelect,
   packetSizeInput,
   resetMapToggleState,
+  terrainTypeSelect,
+  regenTerrainButton,
   sendParams,
   workerPost,
   modulationPresets,
@@ -211,6 +213,18 @@ export function bindControls({
       linkBudgetDb: useLinkBudget && preset ? preset.linkBudgetDb : null,
     });
   });
+
+  if (terrainTypeSelect) {
+    terrainTypeSelect.addEventListener("change", () => {
+        workerPost("generateProceduralTerrain", { terrainType: terrainTypeSelect.value });
+    });
+  }
+
+  if (regenTerrainButton && terrainTypeSelect) {
+    regenTerrainButton.addEventListener("click", () => {
+        workerPost("generateProceduralTerrain", { terrainType: terrainTypeSelect.value });
+    });
+  }
 
   if (packetSizeInput) {
     packetSizeInput.addEventListener("input", () => {

@@ -1,7 +1,7 @@
 export function createTerrain({ clamp }) {
   function sampleTerrainElevation(state, x, y) {
     const terrain = state.terrain;
-    if (!terrain || !Array.isArray(terrain.grid)) {
+    if (!terrain || !terrain.grid || typeof terrain.grid.length !== "number") {
       return null;
     }
     const w = terrain.width;
@@ -72,7 +72,8 @@ export function createTerrain({ clamp }) {
     const terrain = state.terrain;
     if (
       !terrain ||
-      !Array.isArray(terrain.grid) ||
+      !terrain.grid ||
+      typeof terrain.grid.length !== "number" ||
       !Number.isFinite(terrain.width) ||
       !Number.isFinite(terrain.height)
     ) {
@@ -104,19 +105,51 @@ export function createTerrain({ clamp }) {
     const image = layerCtx.createImageData(w, h);
     const data = image.data;
 
-    for (let i = 0; i < grid.length; i += 1) {
-      const z = grid[i];
-      const offset = i * 4;
-      if (!Number.isFinite(z) || min === null || max === null || range === null) {
-        data[offset + 3] = 0;
-        continue;
+    // Directional light for shadow mapping (standard NW lighting: 315° Azimuth, 45° Altitude)
+    const sunAzimuth = (315 * Math.PI) / 180;
+    const sunElevation = (45 * Math.PI) / 180;
+    const lx = Math.cos(sunElevation) * Math.sin(sunAzimuth);
+    const ly = -Math.cos(sunElevation) * Math.cos(sunAzimuth); // Y-axis is inverted in canvas space
+    const lz = Math.sin(sunElevation);
+
+    const mapScale = Number.isFinite(state.mapScale) && state.mapScale > 0 ? state.mapScale : 1;
+    const metersPerPx = (state.metersPerPixel || 10) / mapScale;
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const z = grid[i];
+        const offset = i * 4;
+
+        if (!Number.isFinite(z) || min === null || max === null || range === null) {
+          data[offset + 3] = 0;
+          continue;
+        }
+
+        // Calculate surface normal using central difference (Sobel-style gradient)
+        const zL = grid[y * w + Math.max(0, x - 1)];
+        const zR = grid[y * w + Math.min(w - 1, x + 1)];
+        const dzdx = (zR - zL) / (2 * metersPerPx);
+
+        const zT = grid[Math.max(0, y - 1) * w + x];
+        const zB = grid[Math.min(h - 1, y + 1) * w + x];
+        const dzdy = (zB - zT) / (2 * metersPerPx);
+
+        // Normal vector n = normalize(-dz/dx, -dz/dy, 1)
+        const mag = Math.sqrt(dzdx * dzdx + dzdy * dzdy + 1);
+        const dot = (-dzdx * lx + -dzdy * ly + lz) / mag;
+        const hillshade = clamp((dot + 1) / 2, 0, 1);
+
+        // Blend height-based grayscale with slope-based lighting
+        const t = range > 0 ? clamp((z - min) / range, 0, 1) : 0.5;
+        const baseShade = 35 + t * 150;
+        const shade = clamp(Math.round(baseShade * (0.6 + 0.8 * hillshade)), 0, 255);
+
+        data[offset] = shade;
+        data[offset + 1] = shade;
+        data[offset + 2] = shade;
+        data[offset + 3] = 255;
       }
-      const t = range > 0 ? clamp((z - min) / range, 0, 1) : 0.5;
-      const shade = Math.round(35 + t * 200);
-      data[offset] = shade;
-      data[offset + 1] = shade;
-      data[offset + 2] = shade;
-      data[offset + 3] = 255;
     }
 
     layerCtx.putImageData(image, 0, 0);
@@ -125,4 +158,3 @@ export function createTerrain({ clamp }) {
 
   return { sampleTerrainElevation, applyTerrainToNode, rebuildTerrainLayer };
 }
-

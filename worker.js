@@ -39,6 +39,7 @@ Promise.all([
   import(withVersion("./worker/sim.js")),
   import(withVersion("./worker/render.js")),
   import(withVersion("./worker/canvas.js")),
+  import(withVersion("./worker/procedural_terrain.js")),
   import(withVersion("./lora_airtime.js")),
 ])
   .then(
@@ -53,6 +54,7 @@ Promise.all([
       simMod,
       renderMod,
       canvasMod,
+      proceduralMod,
       loraMod,
     ]) => {
       const state = stateMod.createInitialState();
@@ -74,6 +76,8 @@ Promise.all([
       };
 
       const terrain = terrainMod.createTerrain({ clamp });
+
+      const procedural = proceduralMod.createProceduralGenerator({ clamp });
 
       const paletteUi = paletteMod.createPalette({
         clamp,
@@ -613,6 +617,14 @@ Promise.all([
           return;
         }
 
+        if (type === "moveNodeToClosestPeak") {
+          const id = payload && typeof payload.id === "number" ? payload.id : null;
+          if (id !== null) {
+            sim.moveNodeToClosestPeak(state, id);
+          }
+          return;
+        }
+
         if (type === "previewNodeRadio") {
           const id = payload && typeof payload.id === "number" ? payload.id : null;
           if (id === null || id < 0 || id >= state.nodes.length) {
@@ -831,8 +843,32 @@ Promise.all([
           };
           terrain.rebuildTerrainLayer(state);
           for (const node of state.nodes) {
-            terrain.applyTerrainToNode(state, node);
+            terrain.applyTerrainToNode(state, node, true);
           }
+          tick(performance.now());
+          return;
+        }
+
+        if (type === "generateProceduralTerrain") {
+          const w = Math.floor(state.width);
+          const h = Math.floor(state.height);
+          const seed = payload.seed !== undefined ? payload.seed : Math.random() * 100000;
+          const result = procedural.generate(
+            payload.terrainType,
+            w,
+            h,
+            state.metersPerPixel,
+            seed
+          );
+          state.terrain = result;
+          if (typeof terrain.rebuildTerrainLayer === "function") {
+            terrain.rebuildTerrainLayer(state);
+          }
+          for (const node of state.nodes) {
+            terrain.applyTerrainToNode(state, node, true);
+          }
+          self.postMessage({ type: "terrainGenerated", payload: { type: payload.terrainType } });
+          tick(performance.now());
           return;
         }
 
